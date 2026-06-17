@@ -26,15 +26,20 @@ body {
   background: var(--chalk);
   border-right: 1px solid var(--line);
   padding: 22px 24px 60px;
-  overflow-y: auto;
+  /* Pinned full-height: stays put and fills the viewport while the page
+     scrolls the preview. Scrolls internally only if its own content is tall. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
   height: 100vh;
+  overflow-y: auto;
 }
 
 .brandbar {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
-  margin-bottom: 4px;
+  margin: 6px 0 28px;
 }
 .brandbar .mark {
   font-family: Georgia, serif;
@@ -60,6 +65,15 @@ body {
   align-items: center;
   gap: 8px;
 }
+.rooms-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.rooms-head h3 { margin-bottom: 0; }
+.rooms-head .btn { width: auto; font-size: 11px; padding: 4px 10px; }
 .step h3 .num {
   background: var(--charcoal);
   color: var(--chalk);
@@ -176,7 +190,8 @@ select, input[type="text"] {
   display: flex;
   flex-direction: column;
   align-items: center;
-  overflow-y: auto;
+  /* Grows with content; the page (body) scrolls. The sidebar stays pinned via
+     position:sticky, so nothing clips the bottom of a tall floor plan. */
   min-height: 100vh;
 }
 .stage .sheet {
@@ -202,11 +217,163 @@ select, input[type="text"] {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 14px;
 }
-.stagebar .status { font-size: 12px; color: var(--muted); }
+.stagebar .status { font-size: 12px; color: var(--muted); flex: 1; min-width: 180px; }
 .stagebar .actions { display: flex; gap: 8px; }
-.stagebar a.btn { text-decoration: none; text-align: center; width: auto; padding: 8px 14px; }
+.stagebar .actions .btn { width: auto; padding: 8px 14px; white-space: nowrap; }
+.stagebar a.btn { text-decoration: none; text-align: center; }
+
+/* download dropdown */
+.dropdown { position: relative; }
+.dropdown-backdrop { position: fixed; inset: 0; z-index: 15; }
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 150px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+.menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: #fff;
+  border: none;
+  padding: 9px 14px;
+  font-size: 12.5px;
+  color: var(--charcoal);
+  cursor: pointer;
+}
+.menu button:hover { background: var(--limestone); }
+.menu button:disabled { opacity: 0.5; cursor: default; }
+
+/* ---- document + library tabs ---- */
+/* Sticky header holding the action row (top) above the tab strip (below). */
+.stagehead {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  width: 100%;
+  max-width: 760px;
+  background: #efe9df;
+}
+.tabbar {
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px 0 0;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.tabs { display: flex; gap: 3px; flex-wrap: wrap; align-items: flex-end; }
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  padding: 7px 12px;
+  margin-bottom: -1px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.tab:hover { color: var(--charcoal); }
+.tab.active {
+  background: #fff;
+  border-color: var(--line);
+  border-bottom-color: #fff;
+  color: var(--charcoal);
+  font-weight: 600;
+}
+.tab .tablabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
+.tabx { font-size: 14px; line-height: 1; color: var(--muted); border-radius: 3px; padding: 0 3px; }
+.tabx:hover { color: #8a3d28; background: rgba(138, 61, 40, 0.12); }
+.tab.newtab { font-size: 16px; padding: 4px 11px; color: var(--ember); }
+.stagehead .actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 0 10px;
+}
+.stagehead .actions .btn { width: auto; padding: 8px 14px; white-space: nowrap; }
+
+.statusline {
+  width: 100%;
+  max-width: 760px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+/* ---- sidebar collapse / resize ---- */
+.resizer {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  touch-action: none;
+}
+.resizer:hover, .resizer.active { background: rgba(193, 127, 58, 0.5); }
+.collapsebtn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+}
+.collapsebtn:hover { color: var(--charcoal); }
+.expandbtn {
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  width: 28px;
+  flex: none;
+  background: var(--chalk);
+  border: none;
+  border-right: 1px solid var(--line);
+  cursor: pointer;
+  color: var(--ember);
+  font-size: 18px;
+}
+.expandbtn:hover { background: #fff; }
+
+/* watermark image upload */
+.wm-upload { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.wm-upload .file-btn { width: auto; }
+.wm-preview {
+  height: 40px; max-width: 120px; object-fit: contain;
+  border: 1px solid var(--line); border-radius: 4px; background: #fff; padding: 2px;
+}
+/* Keep the actions pinned to the top of the preview while the sheet scrolls. */
+.stagebar.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #efe9df;
+  padding: 10px 0;
+  margin-bottom: 8px;
+}
+
+.esthint { font-size: 10px; color: var(--muted); margin-top: 4px; font-style: italic; }
 
 .library { width: 100%; max-width: 760px; margin-top: 26px; margin-bottom: 60px; }
 .library h4 { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
@@ -228,7 +395,7 @@ select, input[type="text"] {
 .libsearch { width: 200px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
 
 /* ---- selected label handle + nudge hint ---- */
-.handle.selected .dot { box-shadow: 0 0 0 4px rgba(193, 127, 58, 0.35); }
+.handle.selected .movearrow { box-shadow: 0 0 0 3px rgba(193, 127, 58, 0.5), 0 1px 3px rgba(0, 0, 0, 0.25); }
 .nudgehint {
   position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
   background: rgba(43, 31, 20, 0.85); color: var(--chalk); font-size: 10px;
@@ -254,39 +421,49 @@ select, input[type="text"] {
 /* ---- draggable label overlay ---- */
 .overlayhost { position: relative; }
 .handles { position: absolute; inset: 0; pointer-events: none; }
+/* The handle is centered on the label anchor. A 4-way move arrow marks it as
+   draggable; while dragging it's replaced by the label text itself so you see
+   live where the label will land. */
 .handle {
   position: absolute;
+  width: 24px;
+  height: 24px;
   transform: translate(-50%, -50%);
   pointer-events: auto;
-  cursor: grab;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  cursor: move;
   touch-action: none;
   z-index: 2;
 }
-.handle.dragging { cursor: grabbing; z-index: 3; }
-.handle .dot {
-  width: 13px;
-  height: 13px;
+.handle.dragging { z-index: 4; }
+.handle .movearrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  border: 2px solid var(--ember);
-  background: rgba(255, 255, 255, 0.55);
-  box-shadow: 0 0 0 3px rgba(193, 127, 58, 0.12);
-  flex: none;
+  color: var(--ember);
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 0 0 1px rgba(193, 127, 58, 0.45), 0 1px 3px rgba(0, 0, 0, 0.2);
 }
-.handle.moved .dot { background: var(--ember); }
-.handle .tag {
-  display: none;
-  font-size: 10px;
+.handle:hover .movearrow { background: #fff; }
+.handle.moved .movearrow { color: #fff; background: var(--ember); }
+/* Live label preview that rides under the cursor during a drag. The halo
+   mimics the on-sheet label so the placement reads true. */
+.dragghost {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 1px;
-  background: var(--charcoal);
-  color: var(--chalk);
-  padding: 2px 6px;
-  border-radius: 4px;
+  color: var(--charcoal);
   white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 0 3px var(--chalk), 0 0 3px var(--chalk),
+               0 0 6px var(--chalk), 0 0 6px var(--chalk);
 }
-.handle:hover .tag, .handle.dragging .tag { display: inline-block; }
 
 /* ---- property setup modal ---- */
 .modal-backdrop {
@@ -320,6 +497,9 @@ select, input[type="text"] {
 .modal-head h2 { font-size: 16px; margin: 0; color: var(--charcoal); }
 .modal-foot { border-top: 1px solid var(--line); gap: 10px; }
 .modal-foot .btn { width: auto; padding: 9px 18px; }
+.modal-foot .foot-left { margin-right: auto; }
+.btn.danger { background: #fff; color: #8a3d28; border: 1px solid #e3b6a8; }
+.btn.danger:hover:not(:disabled) { background: #faf0ec; }
 .modal-body { padding: 8px 22px 20px; overflow-y: auto; }
 .modal-body section { padding: 14px 0; border-bottom: 1px solid var(--line); }
 .modal-body section:last-child { border-bottom: none; }
@@ -329,7 +509,15 @@ select, input[type="text"] {
 }
 .modal-body .error { margin: 12px 22px 0; }
 
+.brand-extract { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.brand-extract .subtle { margin: 0; flex: 1; }
+.file-btn { width: auto; padding: 7px 14px; cursor: pointer; white-space: nowrap; }
+.file-btn:has(input:disabled) { opacity: 0.45; cursor: default; }
+
 .palrow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.palrow.active {
+  outline: 2px solid var(--ember); outline-offset: 3px; border-radius: 6px;
+}
 .palrow input[type="color"] {
   width: 40px; height: 34px; padding: 0; border: 1px solid var(--line);
   border-radius: 6px; background: #fff; cursor: pointer;
@@ -346,6 +534,27 @@ select, input[type="text"] {
   display: flex; align-items: center; gap: 12px; padding: 10px 14px; font-size: 12px;
 }
 .sw-body { padding: 16px 14px; font-size: 11px; }
+
+/* ---- detected brand colors + fonts ---- */
+.brand-found { margin-top: 12px; }
+.brand-found .subtle { margin-bottom: 8px; }
+.swatch-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.swatch-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px; font-family: monospace; font-size: 11px;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--ink); cursor: pointer;
+}
+.swatch-chip:hover:not(:disabled) { border-color: var(--ember); }
+.swatch-chip:disabled { cursor: default; opacity: 0.7; }
+.swatch-chip .sw-dot {
+  width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--line);
+}
+.font-hints { display: flex; flex-wrap: wrap; gap: 6px; }
+.font-hint {
+  padding: 3px 8px; font-size: 11px; border-radius: 6px;
+  background: #efe9df; color: var(--ink);
+}
 
 /* ---- key-plan plate box picker ---- */
 .platepick {
