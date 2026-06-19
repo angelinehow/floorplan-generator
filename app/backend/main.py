@@ -524,6 +524,7 @@ class Property(BaseModel):
     palette: Dict[str, str] = {}
     fonts: Optional[Dict[str, str]] = None
     brand_swatches: Optional[List[Dict[str, Any]]] = None  # detected colors, kept for re-picking
+    brand_fonts: Optional[List[str]] = None                # font names detected in a brand PDF, kept as hints
     font_faces: Optional[List[Dict[str, Any]]] = None      # uploaded brand fonts: {family, data, format}
     layer_map: Dict[str, List[str]] = {}
 
