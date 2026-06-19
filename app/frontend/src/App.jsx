@@ -14,6 +14,12 @@ const LS_PROP = "fpsg.lastProperty";
 const LS_SESSION = "fpsg.session.v2";   // multi-document shape
 const LS_UI = "fpsg.ui";
 
+// Batch upload (spec §11): select up to 10 files; each parsed unit opens as its
+// own editable tab and nothing auto-saves to the library. The queue throttles
+// parsing to BATCH_CONCURRENCY at a time and isolates per-file failures.
+const BATCH_MAX = 10;
+const BATCH_CONCURRENCY = 2;
+
 const slugify = (s) => (s || "floorplan").replace(/\s+/g, "-").toLowerCase();
 
 // Download/save filename: the property slug prefixes the unit title so files
@@ -35,6 +41,28 @@ function guessTitle(labels) {
 
 let _seq = 0;
 const uid = () => `d${Date.now().toString(36)}${(_seq++).toString(36)}`;
+
+// Map a /parse response onto the doc fields it populates. Shared by the single
+// upload (handleFile) and batch (runBatch) paths so they can't drift.
+function parsedDocFields(d, fileName) {
+  return {
+    fileName,
+    docId: d.doc_id,
+    rooms: d.labels.map((l) => ({ ...l })),
+    deletedRooms: [],
+    ignored: d.ignored_text || [],
+    suggestions: d.suggestions || {},
+    warnings: d.warnings || [],
+    parseError: "",
+    svg: "",
+    savedId: null,
+    meta: {
+      title: (d.suggestions && d.suggestions.title) || guessTitle(d.labels),
+      suite: (d.suggestions && d.suggestions.suite) || "",
+      sf: (d.suggestions && d.suggestions.sf) || "",
+    },
+  };
+}
 
 // One open floor-plan editing session (one tab).
 function newDoc(propertyId) {
@@ -67,6 +95,7 @@ export default function App() {
   const [docs, setDocs] = useState([]);
   const [activeId, setActiveId] = useState(null);      // a doc id, or "library"
   const [sheets, setSheets] = useState([]);
+  const [queue, setQueue] = useState([]);              // batch upload progress rows
 
   const [parsing, setParsing] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -240,6 +269,20 @@ export default function App() {
   }
 
   // ---- parse / render ------------------------------------------------------
+  // File picker entry point. One file keeps the original in-place flow; two or
+  // more switches to the batch queue (§11).
+  function handleFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    if (files.length === 1) { handleFile(files[0]); return; }
+    let chosen = files;
+    if (files.length > BATCH_MAX) {
+      chosen = files.slice(0, BATCH_MAX);
+      toast(`Batch is limited to ${BATCH_MAX} files — processing the first ${BATCH_MAX}.`, "info");
+    }
+    runBatch(chosen, defaultProp || (active && active.propertyId) || "");
+  }
+
   async function handleFile(file) {
     if (!file) return;
     let id = activeId;
@@ -254,20 +297,7 @@ export default function App() {
     patchDoc(id, { fileName: file.name, parseError: "", svg: "", savedId: null });
     try {
       const d = await parseFile(file, prop || undefined);
-      patchDoc(id, {
-        docId: d.doc_id,
-        rooms: d.labels.map((l) => ({ ...l })),
-        deletedRooms: [],
-        ignored: d.ignored_text || [],
-        suggestions: d.suggestions || {},
-        warnings: d.warnings || [],
-        parseError: "",
-        meta: {
-          title: (d.suggestions && d.suggestions.title) || guessTitle(d.labels),
-          suite: (d.suggestions && d.suggestions.suite) || "",
-          sf: (d.suggestions && d.suggestions.sf) || "",
-        },
-      });
+      patchDoc(id, parsedDocFields(d, file.name));
       setOpenSection("details");
     } catch (e) {
       patchDoc(id, { docId: null, rooms: [], parseError: e.message });
@@ -275,6 +305,59 @@ export default function App() {
     } finally {
       setParsing(false);
     }
+  }
+
+  // Parse several files through a fixed-size worker pool. Each success appends a
+  // ready editor tab; failures stay in the queue with their reason so one bad
+  // file never sinks the rest. Nothing is saved to the library (spec §11).
+  function runBatch(files, prop) {
+    const items = files.map((f) => ({
+      qid: uid(), file: f, fileName: f.name, status: "queued", error: "", docId: null,
+    }));
+    setQueue(items);
+    const setStatus = (qid, patch) =>
+      setQueue((q) => q.map((it) => (it.qid === qid ? { ...it, ...patch } : it)));
+
+    let next = 0;
+    let firstReady = null;
+    const rejected = [];   // file names that failed to parse
+    let accepted = 0;
+    async function worker() {
+      while (next < items.length) {
+        const item = items[next++];
+        setStatus(item.qid, { status: "parsing" });
+        try {
+          const d = await parseFile(item.file, prop || undefined);
+          const doc = { ...newDoc(prop), ...parsedDocFields(d, item.fileName) };
+          setDocs((ds) => [...ds, doc]);
+          setStatus(item.qid, { status: "ready", docId: doc.id });
+          accepted++;
+          if (!firstReady) {            // jump to the first finished unit so the user can start reviewing
+            firstReady = doc.id;
+            setActiveId(doc.id);
+            setOpenSection("details");
+          }
+        } catch (e) {
+          setStatus(item.qid, { status: "failed", error: e.message });
+          rejected.push(item.fileName);
+        }
+      }
+    }
+    // Run BATCH_CONCURRENCY workers sharing the `next` cursor, so the queue never
+    // has more than that many parses in flight. Summarize when all have settled:
+    // open every valid file, and name the rejected ones so nothing fails silently.
+    return Promise.all(
+      Array.from({ length: Math.min(BATCH_CONCURRENCY, items.length) }, worker)
+    ).then(() => {
+      const names = rejected.join(", ");
+      if (rejected.length === 0) {
+        toast(`Opened all ${accepted} files in tabs.`, "success");
+      } else if (accepted === 0) {
+        toast(`No files could be opened. Rejected: ${names}`, "error");
+      } else {
+        toast(`Opened ${accepted} file${accepted === 1 ? "" : "s"}; rejected ${rejected.length}: ${names}`, "info");
+      }
+    });
   }
 
   async function doRender(save, asNew = false) {
@@ -599,11 +682,19 @@ export default function App() {
           </div>
 
           <div className="step">
-            <h3><span className="num">2</span> Upload floor plan</h3>
+            <h3>
+              <span className="num">2</span> Upload floor plan
+              <span className="infodot" tabIndex={0}>
+                ⓘ
+                <span className="infotip" role="tooltip">
+                  Each file opens in its own tab for review and exporting when ready.
+                </span>
+              </span>
+            </h3>
             <label className="drop">
-              {parsing ? "Parsing…" : (active && active.fileName ? active.fileName : "Click to choose a DXF")}
-              <input type="file" accept=".dxf,.dwg"
-                onChange={(e) => handleFile(e.target.files[0])} />
+              {parsing ? "Parsing…" : (active && active.fileName ? active.fileName : "Select up to 10 DXF files")}
+              <input type="file" multiple accept=".dxf,.dwg"
+                onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
             </label>
             {caps && (
               <p className="subtle" style={{ marginTop: 6 }}>
@@ -724,6 +815,34 @@ export default function App() {
       )}
 
       <main className="stage">
+        {queue.length > 0 && (() => {
+          const ready = queue.filter((q) => q.status === "ready").length;
+          const failed = queue.filter((q) => q.status === "failed").length;
+          const pending = queue.length - ready - failed;
+          return (
+            <div className="batchqueue">
+              <div className="batchqueue-head">
+                <strong>Batch upload — {queue.length} files</strong>
+                <span className="subtle" style={{ flex: 1 }}>
+                  {ready} ready{failed ? ` · ${failed} failed` : ""}{pending ? ` · ${pending} processing…` : ""}
+                </span>
+                <button className="chip" onClick={() => setQueue([])}>Dismiss</button>
+              </div>
+              {queue.map((it) => (
+                <div className={"batchqueue-row " + it.status} key={it.qid}>
+                  <span className={"qdot " + it.status} />
+                  <span className="qname" title={it.fileName}>{it.fileName}</span>
+                  {it.status === "queued" && <span className="qstatus subtle">Queued</span>}
+                  {it.status === "parsing" && <span className="qstatus subtle">Parsing…</span>}
+                  {it.status === "ready" && (
+                    <button className="qstatus linkish" onClick={() => setActiveId(it.docId)}>Open tab ↗</button>
+                  )}
+                  {it.status === "failed" && <span className="qstatus qerr" title={it.error}>{it.error}</span>}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         <div className="stagehead">
           <div className="tabbar">
             {effectiveOrient === "horizontal" && (

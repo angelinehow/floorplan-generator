@@ -64,6 +64,9 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* positioning context for .infotip so it stays within the sidebar width
+     rather than overflowing from the small info dot */
+  position: relative;
 }
 .rooms-head {
   display: flex;
@@ -83,6 +86,43 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.step h3 .infodot {
+  cursor: help;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.7;
+}
+.step h3 .infodot:hover, .step h3 .infodot:focus { opacity: 1; outline: none; }
+.step h3 .infodot .infotip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 230px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  background: var(--charcoal);
+  color: var(--chalk);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.45;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  /* instant on hover/focus — no transition delay */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.step h3 .infodot:hover .infotip,
+.step h3 .infodot:focus .infotip {
+  opacity: 1;
+  visibility: visible;
 }
 
 label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
@@ -183,6 +223,50 @@ select, input[type="text"] {
   font-size: 12px;
   margin-bottom: 12px;
 }
+
+/* ---- batch upload queue ---- */
+.batchqueue {
+  width: 100%;
+  max-width: 760px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+}
+.batchqueue-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.batchqueue-head .subtle { margin: 0; }
+.batchqueue-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.batchqueue-row .qname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batchqueue-row .qstatus { flex-shrink: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batchqueue-row .qerr { color: #8a3d28; }
+.batchqueue-row .linkish {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--ember); font: inherit; text-decoration: underline;
+}
+.qdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #c9c2b6; }
+.qdot.parsing { background: #d9a441; animation: qpulse 1s ease-in-out infinite; }
+.qdot.ready { background: #4c8a3d; }
+.qdot.failed { background: #8a3d28; }
+@keyframes qpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* ---- right preview stage ---- */
 .stage {
