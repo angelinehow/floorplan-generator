@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   getCapabilities, listProperties, parseFile, renderSheet,
-  listSheets, reopenSheet, deleteSheet,
+  listAllSheets, reopenSheet, deleteSheet,
 } from "./api.js";
 import LabelOverlay from "./LabelOverlay.jsx";
 import PropertySetup from "./PropertySetup.jsx";
@@ -15,6 +15,15 @@ const LS_SESSION = "fpsg.session.v2";   // multi-document shape
 const LS_UI = "fpsg.ui";
 
 const slugify = (s) => (s || "floorplan").replace(/\s+/g, "-").toLowerCase();
+
+// Download/save filename: the property slug prefixes the unit title so files
+// group by property on disk. This is intentionally NOT the footer name on the
+// sheet (which stays just the unit title) — the file on the computer carries the
+// property prefix, the diagram's footer does not.
+const exportName = (propId, title, suffix = "") => {
+  const base = slugify(title) + suffix;
+  return propId ? `${slugify(propId)}-${base}` : base;
+};
 
 // Best-effort unit name when the DXF doesn't carry one: count bedrooms.
 function guessTitle(labels) {
@@ -64,6 +73,7 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [pngBusy, setPngBusy] = useState(false);
   const [dlOpen, setDlOpen] = useState(false);
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
 
   const [editing, setEditing] = useState(null);
   const [openSection, setOpenSection] = useState("upload");
@@ -73,6 +83,7 @@ export default function App() {
   const [resizing, setResizing] = useState(false);
 
   const debounce = useRef(null);
+  const renderSeq = useRef(0);   // latest-wins guard so a slow /render can't clobber a newer one
 
   const active = docs.find((d) => d.id === activeId) || null;
   const propertyId = active ? active.propertyId : defaultProp;
@@ -109,7 +120,7 @@ export default function App() {
       if (s && Array.isArray(s.docs) && s.docs.length) {
         const restored = s.docs.map((d) => ({
           ...newDoc(d.propertyId || initialProp), ...d,
-          svg: "", placement: null, keyplanSvg: null, savedId: null,
+          svg: "", placement: null, keyplanSvg: null,
           parseError: "", renderError: "",
         }));
         setDocs(restored);
@@ -130,23 +141,29 @@ export default function App() {
     localStorage.setItem(LS_UI, JSON.stringify({ panelW, collapsed }));
   }, [panelW, collapsed]);
 
-  // autosave open docs (slim — geometry stays server-side, re-rendered on load)
+  // autosave open docs (slim — geometry stays server-side, re-rendered on load).
+  // Debounced: the serialize-all-docs + stringify is deferred to a quiet moment
+  // so it doesn't run on every keystroke. A change in the last ~600ms before an
+  // abrupt tab close may not persist — acceptable for a convenience autosave.
   useEffect(() => {
     if (!docs.length) return;
-    const slim = docs.map((d) => ({
-      id: d.id, propertyId: d.propertyId, docId: d.docId, fileName: d.fileName,
-      rooms: d.rooms, deletedRooms: d.deletedRooms, ignored: d.ignored,
-      meta: d.meta, suggestions: d.suggestions, warnings: d.warnings,
-      keyplan: d.keyplan, showHandles: d.showHandles,
-    }));
-    localStorage.setItem(LS_SESSION, JSON.stringify({ docs: slim, activeId }));
+    const t = setTimeout(() => {
+      const slim = docs.map((d) => ({
+        id: d.id, propertyId: d.propertyId, docId: d.docId, fileName: d.fileName,
+        savedId: d.savedId, rooms: d.rooms, deletedRooms: d.deletedRooms, ignored: d.ignored,
+        meta: d.meta, suggestions: d.suggestions, warnings: d.warnings,
+        keyplan: d.keyplan, showHandles: d.showHandles,
+      }));
+      localStorage.setItem(LS_SESSION, JSON.stringify({ docs: slim, activeId }));
+    }, 600);
+    return () => clearTimeout(t);
   }, [docs, activeId]);
 
-  // library list follows the active property
-  useEffect(() => {
-    if (propertyId) listSheets(propertyId).then(setSheets).catch(() => {});
-    else setSheets([]);
-  }, [propertyId, activeId]);
+  // Unified library: every saved sheet across all properties, refreshed on
+  // mount and whenever the library tab is opened (and after save/delete/rename).
+  const refreshSheets = () => listAllSheets().then(setSheets).catch(() => {});
+  useEffect(() => { refreshSheets(); }, []);
+  useEffect(() => { if (activeId === "library") refreshSheets(); }, [activeId]);
 
   // Ctrl/Cmd+Z restores the last deleted room of the active doc, unless a text
   // field is focused (so native input undo keeps working).
@@ -243,29 +260,40 @@ export default function App() {
     }
   }
 
-  async function doRender(save) {
+  async function doRender(save, asNew = false) {
     const d = docs.find((x) => x.id === activeId);
     if (!d || !d.docId) return;
+    const mySeq = ++renderSeq.current;   // claim the latest slot for preview output
     if (save) setSaving(true); else setRendering(true);
     try {
       const res = await renderSheet({
         doc_id: d.docId, property_id: d.propertyId || null,
-        metadata: d.meta, rooms: d.rooms, keyplan: d.keyplan || null, save,
+        metadata: d.meta, rooms: d.rooms, keyplan: d.keyplan || null,
+        sheet_id: asNew ? null : (d.savedId || null), save,
       });
+      const latest = mySeq === renderSeq.current;
       patchDoc(d.id, {
-        svg: res.svg, placement: res.meta || d.placement,
-        keyplanSvg: res.keyplan_svg || null, renderError: "",
+        // only the newest render may repaint the preview — an earlier response
+        // resolving after a newer one must not overwrite fresher geometry
+        ...(latest ? {
+          svg: res.svg, placement: res.meta || d.placement,
+          keyplanSvg: res.keyplan_svg || null, renderError: "",
+        } : {}),
+        // a completed save is a committed server action: always record it, even
+        // if a newer preview has since superseded the on-screen output
         ...(save && res.sheet_id ? { savedId: res.sheet_id } : {}),
       });
       if (save && res.sheet_id) {
-        toast("Saved to the library", "success");
-        if (d.propertyId) listSheets(d.propertyId).then(setSheets).catch(() => {});
+        toast(asNew ? "Saved as a new sheet" :
+          d.savedId ? "Changes saved to the library" : "Saved to the library", "success");
+        refreshSheets();
       }
     } catch (e) {
       if (/expired|not found/i.test(e.message)) {
         toast("This unit's upload expired — re-upload the DXF.", "error");
         patchDoc(d.id, { docId: null });
-      } else {
+      } else if (save || mySeq === renderSeq.current) {
+        // surface save failures always; suppress errors from a stale preview
         patchDoc(d.id, { renderError: e.message });
       }
     } finally {
@@ -333,7 +361,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${slugify(active.meta.title)}.svg`;
+    a.download = `${exportName(active.propertyId, active.meta.title)}.svg`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -349,7 +377,7 @@ export default function App() {
       if (!res.png_b64) throw new Error("No PNG returned by the server.");
       const a = document.createElement("a");
       a.href = "data:image/png;base64," + res.png_b64;
-      a.download = `${slugify(d.meta.title)}.png`;
+      a.download = `${exportName(d.propertyId, d.meta.title)}.png`;
       a.click();
     } catch (e) {
       toast(e.message, "error");
@@ -360,13 +388,15 @@ export default function App() {
 
   // ---- library actions -----------------------------------------------------
   async function reopen(s) {
+    const prop = s.property_id || propertyId;
     try {
-      const cfg = await reopenSheet(propertyId, s.sheet_id);
-      const d = newDoc(cfg.property_id || propertyId);
+      const cfg = await reopenSheet(prop, s.sheet_id);
+      const d = newDoc(cfg.property_id || prop);
       d.docId = cfg.doc_id;
       d.rooms = (cfg.rooms || []).map((r) => ({ ...r }));
       d.meta = cfg.metadata || { title: "", suite: "", sf: "" };
       d.keyplan = cfg.keyplan || null;
+      d.savedId = s.sheet_id;       // re-saving overwrites this library entry
       d.fileName = `${s.title || "sheet"} (re-opened)`;
       setDocs((ds) => [...ds, d]);
       setActiveId(d.id);
@@ -379,7 +409,7 @@ export default function App() {
   async function removeSheet(s) {
     if (!window.confirm(`Delete "${s.title || "Untitled"}"? This can't be undone.`)) return;
     try {
-      await deleteSheet(propertyId, s.sheet_id);
+      await deleteSheet(s.property_id || propertyId, s.sheet_id);
       setSheets((xs) => xs.filter((x) => x.sheet_id !== s.sheet_id));
       toast("Sheet deleted", "success");
     } catch (e) {
@@ -562,10 +592,30 @@ export default function App() {
             </div>
             {ready && (
               <div className="actions">
-                <button className="btn ember" disabled={saving || rendering || !propertyId}
-                  onClick={() => doRender(true)}>
-                  {saving ? "Saving…" : "Save to library"}
-                </button>
+                <div className="dropdown split">
+                  <button className="btn ember" disabled={saving || rendering || !propertyId}
+                    onClick={() => doRender(true)}
+                    title={active.savedId ? "Overwrite the saved sheet in the library" : "Save a new sheet to the library"}>
+                    {saving ? "Saving…" : active.savedId ? "Save changes" : "Save to library"}
+                  </button>
+                  {active.savedId && (
+                    <button className="btn ember caret" disabled={saving || rendering || !propertyId}
+                      title="More save options" onClick={() => setSaveMenuOpen((o) => !o)}>▾</button>
+                  )}
+                  {saveMenuOpen && (
+                    <>
+                      <div className="dropdown-backdrop" onClick={() => setSaveMenuOpen(false)} />
+                      <div className="menu">
+                        <button onClick={() => { setSaveMenuOpen(false); doRender(true); }}>
+                          Save changes
+                        </button>
+                        <button onClick={() => { setSaveMenuOpen(false); doRender(true, true); }}>
+                          Save as new copy
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
                 <div className="dropdown">
                   <button className="btn ghost" disabled={!active.svg}
                     onClick={() => setDlOpen((o) => !o)}>
@@ -592,7 +642,7 @@ export default function App() {
         </div>
 
         {activeId === "library" ? (
-          <Library propertyId={propertyId} sheets={sheets}
+          <Library sheets={sheets}
             onReopen={reopen} onDelete={removeSheet} />
         ) : !ready ? (
           <div className="placeholder">

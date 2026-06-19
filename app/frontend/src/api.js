@@ -84,8 +84,8 @@ export async function deleteProperty(id) {
   return handle(r, "Delete failed");
 }
 
-export async function listSheets(propertyId) {
-  return jget(`/sheets/${propertyId}`);
+export async function listAllSheets() {
+  return jget("/sheets");
 }
 
 export function sheetUrl(propertyId, sheetId, ext) {

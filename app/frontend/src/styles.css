@@ -228,6 +228,12 @@ select, input[type="text"] {
 
 /* download dropdown */
 .dropdown { position: relative; }
+.dropdown.split { display: flex; }
+.dropdown.split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.dropdown.split > .btn.caret {
+  width: auto; padding: 0 9px; border-top-left-radius: 0; border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.35); font-size: 11px;
+}
 .dropdown-backdrop { position: fixed; inset: 0; z-index: 15; }
 .menu {
   position: absolute;
@@ -423,6 +429,16 @@ select, input[type="text"] {
 .libhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .libhead h4 { margin: 0; }
 .libsearch { width: 200px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+/* property filter chips */
+.libfilters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.libchip {
+  font-size: 11px; padding: 4px 11px; border-radius: 20px;
+  border: 1px solid var(--line); background: #fff; color: var(--muted); cursor: pointer;
+}
+.libchip:hover { color: var(--charcoal); }
+.libchip.on { background: var(--charcoal); color: var(--chalk); border-color: var(--charcoal); }
+/* per-card property name + inline rename field */
+.libprop { font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--ember); margin-bottom: 2px; }
 
 /* ---- selected label handle + nudge hint ---- */
 .handle.selected .movearrow { box-shadow: 0 0 0 3px rgba(193, 127, 58, 0.5), 0 1px 3px rgba(0, 0, 0, 0.25); }

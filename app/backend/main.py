@@ -7,7 +7,8 @@ Floor Plan Sheet Generator — backend service.
   POST /render                        config (+ optional key plan) -> SVG/PNG
   GET  /properties                    list configured properties
   GET/PUT/DELETE /properties/{id}     property CRUD (brand + layer map)
-  GET  /sheets/{prop}                 saved sheets for a property
+  GET  /sheets                        unified library: all sheets, all properties
+  GET  /sheets/{prop}                 saved sheets for one property
   GET  /sheets/{prop}/{id}.svg|.png   download a saved sheet
   POST /sheets/{prop}/{id}/reopen     re-register geometry to keep editing
   DELETE /sheets/{prop}/{id}          remove a saved sheet
@@ -365,6 +366,7 @@ class RenderRequest(BaseModel):
     layer_map: Optional[Dict[str, List[str]]] = None
     keyplan: Optional[Dict[str, Any]] = None
     save: bool = False
+    sheet_id: Optional[str] = None   # overwrite this saved sheet instead of minting a new one
     want_png: bool = False   # include base64 PNG in the response (for download)
 
 
@@ -382,6 +384,8 @@ def do_render(req: RenderRequest):
     _safe_id(req.doc_id, "doc id")
     if req.property_id:
         _safe_id(req.property_id, "property id")
+    if req.sheet_id:
+        _safe_id(req.sheet_id, "sheet id")
     if req.keyplan and req.keyplan.get("plate_id"):
         _safe_id(req.keyplan["plate_id"], "plate id")
     prims = _load_prims(req.doc_id)
@@ -411,31 +415,44 @@ def do_render(req: RenderRequest):
 
     sheet_id = None
     if req.save and req.property_id:
-        sheet_id = uuid.uuid4().hex[:10]
         out = os.path.join(SHEET_DIR, req.property_id)
         os.makedirs(out, exist_ok=True)
+        index = os.path.join(out, "index.json")
+        sheets = _read_json(index, [])
+
+        # Overwrite the existing entry when re-saving a re-opened sheet; otherwise mint a new id.
+        existing = next((s for s in sheets if s.get("sheet_id") == req.sheet_id), None) \
+            if req.sheet_id else None
+        sheet_id = req.sheet_id if existing else uuid.uuid4().hex[:10]
+
         with open(os.path.join(out, f"{sheet_id}.svg"), "w", encoding="utf-8") as f:
             f.write(svg)
         with open(os.path.join(out, f"{sheet_id}.png"), "wb") as f:
             f.write(png)
+        kp_path = os.path.join(out, f"{sheet_id}-keyplan.svg")
         if keyplan_svg:
-            with open(os.path.join(out, f"{sheet_id}-keyplan.svg"), "w", encoding="utf-8") as f:
+            with open(kp_path, "w", encoding="utf-8") as f:
                 f.write(keyplan_svg)
+        elif os.path.isfile(kp_path):
+            os.remove(kp_path)   # key plan was dropped since the last save
         # persist the editable config + geometry so the sheet can be re-opened
-        json.dump({"property_id": req.property_id, "metadata": req.metadata,
-                   "rooms": req.rooms, "keyplan": req.keyplan},
-                  open(os.path.join(out, f"{sheet_id}.config.json"), "w", encoding="utf-8"))
+        _write_json(os.path.join(out, f"{sheet_id}.config.json"),
+                    {"property_id": req.property_id, "metadata": req.metadata,
+                     "rooms": req.rooms, "keyplan": req.keyplan})
         prims_src = os.path.join(UP_DIR, f"{req.doc_id}.prims.json")
         if os.path.isfile(prims_src):
             shutil.copy(prims_src, os.path.join(out, f"{sheet_id}.prims.json"))
-        index = os.path.join(out, "index.json")
-        sheets = json.load(open(index, encoding="utf-8")) if os.path.isfile(index) else []
-        sheets.insert(0, {"sheet_id": sheet_id, "title": req.metadata.get("title", ""),
-                          "suite": req.metadata.get("suite", ""),
-                          "sf": req.metadata.get("sf", ""),
-                          "keyplan": bool(keyplan_svg),
-                          "created": time.strftime("%Y-%m-%d %H:%M")})
-        json.dump(sheets, open(index, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+        entry = {"sheet_id": sheet_id, "title": req.metadata.get("title", ""),
+                 "suite": req.metadata.get("suite", ""),
+                 "sf": req.metadata.get("sf", ""),
+                 "keyplan": bool(keyplan_svg),
+                 "created": existing["created"] if existing else time.strftime("%Y-%m-%d %H:%M"),
+                 "updated": time.strftime("%Y-%m-%d %H:%M:%S")}  # cache-busts the library thumbnail
+        if existing:
+            sheets[sheets.index(existing)] = entry   # keep its position in the library
+        else:
+            sheets.insert(0, entry)
+        _write_json(index, sheets, indent=2, ensure_ascii=False)
 
     png_b64 = base64.b64encode(png).decode("ascii") if req.want_png else None
     return {"svg": svg, "keyplan_svg": keyplan_svg, "sheet_id": sheet_id,
@@ -504,33 +521,58 @@ def delete_property(prop_id):
 # --------------------------------------------------------------------------- #
 # sheet library
 # --------------------------------------------------------------------------- #
+def _read_index(prop_id):
+    return _read_json(os.path.join(SHEET_DIR, prop_id, "index.json"), [])
+
+
+@app.get("/sheets")
+def list_all_sheets():
+    """Every saved sheet across all properties, each annotated with its
+    property id + name, newest first — the unified library."""
+    out = []
+    for prop_id in sorted(os.listdir(SHEET_DIR)) if os.path.isdir(SHEET_DIR) else []:
+        if not os.path.isdir(os.path.join(SHEET_DIR, prop_id)):
+            continue
+        prop = load_property(prop_id) or {}
+        pname = prop.get("name") or prop_id
+        for s in _read_index(prop_id):
+            out.append({**s, "property_id": prop_id, "property_name": pname})
+    out.sort(key=lambda s: s.get("created", ""), reverse=True)
+    return out
+
+
 @app.get("/sheets/{prop_id}")
 def list_sheets(prop_id):
-    index = os.path.join(SHEET_DIR, prop_id, "index.json")
-    if not os.path.isfile(index):
-        return []
-    with open(index, encoding="utf-8") as f:
-        return json.load(f)
+    _safe_id(prop_id, "property id")
+    return _read_index(prop_id)
 
 
 @app.get("/sheets/{prop_id}/{sheet_id}.svg")
 def get_sheet_svg(prop_id, sheet_id):
+    _safe_id(prop_id, "property id")
+    _safe_id(sheet_id, "sheet id")
     path = os.path.join(SHEET_DIR, prop_id, f"{sheet_id}.svg")
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Sheet not found.")
-    return Response(open(path, encoding="utf-8").read(), media_type="image/svg+xml")
+    with open(path, encoding="utf-8") as f:
+        return Response(f.read(), media_type="image/svg+xml")
 
 
 @app.get("/sheets/{prop_id}/{sheet_id}.png")
 def get_sheet_png(prop_id, sheet_id):
+    _safe_id(prop_id, "property id")
+    _safe_id(sheet_id, "sheet id")
     path = os.path.join(SHEET_DIR, prop_id, f"{sheet_id}.png")
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Sheet not found.")
-    return Response(open(path, "rb").read(), media_type="image/png")
+    with open(path, "rb") as f:
+        return Response(f.read(), media_type="image/png")
 
 
 @app.post("/sheets/{prop_id}/{sheet_id}/reopen")
 def reopen_sheet(prop_id, sheet_id):
+    _safe_id(prop_id, "property id")
+    _safe_id(sheet_id, "sheet id")
     d = os.path.join(SHEET_DIR, prop_id)
     cfg_path = os.path.join(d, f"{sheet_id}.config.json")
     prims_path = os.path.join(d, f"{sheet_id}.prims.json")
@@ -539,7 +581,7 @@ def reopen_sheet(prop_id, sheet_id):
             status_code=404,
             detail="This sheet can't be re-opened — its source geometry wasn't "
                    "saved with it. Re-upload the DXF to edit.")
-    cfg = json.load(open(cfg_path, encoding="utf-8"))
+    cfg = _read_json(cfg_path)
     new_doc = uuid.uuid4().hex[:12]
     shutil.copy(prims_path, os.path.join(UP_DIR, f"{new_doc}.prims.json"))
     cfg["doc_id"] = new_doc
@@ -548,6 +590,8 @@ def reopen_sheet(prop_id, sheet_id):
 
 @app.delete("/sheets/{prop_id}/{sheet_id}")
 def delete_sheet(prop_id, sheet_id):
+    _safe_id(prop_id, "property id")
+    _safe_id(sheet_id, "sheet id")
     d = os.path.join(SHEET_DIR, prop_id)
     for fn in glob.glob(os.path.join(d, f"{sheet_id}.*")) + \
             glob.glob(os.path.join(d, f"{sheet_id}-keyplan.*")):
@@ -557,6 +601,6 @@ def delete_sheet(prop_id, sheet_id):
             pass
     index = os.path.join(d, "index.json")
     if os.path.isfile(index):
-        sheets = [s for s in json.load(open(index, encoding="utf-8")) if s.get("sheet_id") != sheet_id]
-        json.dump(sheets, open(index, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+        sheets = [s for s in _read_json(index, []) if s.get("sheet_id") != sheet_id]
+        _write_json(index, sheets, indent=2, ensure_ascii=False)
     return {"deleted": sheet_id}
