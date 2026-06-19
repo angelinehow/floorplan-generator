@@ -34,8 +34,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
-from engine import (parse_dxf, ParseError, DEFAULT_LAYER_MAP, render,
-                    render_keyplan_sheet, trace_plate, colorize_trace,
+import ezdxf
+
+from engine import (parse_dxf, ParseError, DEFAULT_LAYER_MAP, infer_layer_map,
+                    render, render_keyplan_sheet, trace_plate, colorize_trace,
                     dwg_to_dxf, converter_available,
                     ConversionError, extract_brand, BrandError)
 
@@ -269,10 +271,19 @@ def health():
 # parse
 # --------------------------------------------------------------------------- #
 @app.post("/parse")
-async def parse(file: UploadFile = File(...), property_id: Optional[str] = Form(None)):
+async def parse(file: UploadFile = File(...), property_id: Optional[str] = Form(None),
+                layer_map: Optional[str] = Form(None)):
     sweep_uploads()
     if property_id:
         _safe_id(property_id, "property id")
+    override_map = None
+    if isinstance(layer_map, str) and layer_map.strip():
+        try:
+            override_map = json.loads(layer_map)
+            if not isinstance(override_map, dict):
+                raise ValueError("layer_map must be a JSON object")
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=f"Bad layer_map: {exc}")
     name = (file.filename or "").lower()
     raw = await file.read()
     if len(raw) > MAX_UPLOAD_MB * 1024 * 1024:
@@ -298,17 +309,38 @@ async def parse(file: UploadFile = File(...), property_id: Optional[str] = Form(
             "Unsupported file type. Upload a DXF (or DWG if the server has the "
             "ODA File Converter)."))
     prop = load_property(property_id) if property_id else None
-    layer_map = (prop or {}).get("layer_map") or DEFAULT_LAYER_MAP
+    # Precedence: an explicit override (the user corrected the map) wins; then a
+    # saved property's map; then the Revit-scheme default. The default/property
+    # path stays byte-identical to before — inference only steps in on failure.
+    used_map = override_map or (prop or {}).get("layer_map") or DEFAULT_LAYER_MAP
+    layer_report = None
+    layer_inferred = False
     try:
-        result = parse_dxf(dxf_path, layer_map=layer_map)
+        result = parse_dxf(dxf_path, layer_map=used_map)
     except ParseError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        # No wall geometry under the chosen map. If the user explicitly chose it,
+        # respect that and surface the error. Otherwise the file likely uses a
+        # non-Revit layer scheme — auto-detect the roles and try once more.
+        if override_map is not None:
+            raise HTTPException(status_code=422, detail=str(exc))
+        try:
+            doc = ezdxf.readfile(dxf_path)
+            inferred, layer_report = infer_layer_map(doc)
+            result = parse_dxf(dxf_path, layer_map=inferred)
+            used_map, layer_inferred = inferred, True
+        except ParseError:
+            raise HTTPException(status_code=422, detail=str(exc))   # original guidance
+        except Exception:
+            logger.exception("Layer auto-detection failed for doc_id=%s", doc_id)
+            raise HTTPException(status_code=422, detail=str(exc))
     with open(os.path.join(UP_DIR, f"{doc_id}.prims.json"), "w", encoding="utf-8") as f:
         json.dump({"prims": result["prims"], "extents": result["extents"]}, f)
     return {"doc_id": doc_id, "labels": result["labels"],
             "ignored_text": result["ignored_text"], "suggestions": result["suggestions"],
             "warnings": result.get("warnings", []), "extents": result["extents"],
-            "prim_count": len(result["prims"])}
+            "prim_count": len(result["prims"]),
+            "layer_map_used": used_map, "layer_report": layer_report,
+            "layer_inferred": layer_inferred}
 
 
 # --------------------------------------------------------------------------- #
