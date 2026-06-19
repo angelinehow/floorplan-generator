@@ -159,7 +159,7 @@ export default function App() {
   const [winW, setWinW] = useState(typeof window !== "undefined" ? window.innerWidth : 1400);
 
   const debounce = useRef(null);
-  const renderSeq = useRef(0);   // latest-wins guard so a slow /render can't clobber a newer one
+  const renderSeq = useRef({});  // per-doc latest-wins guard (keyed by doc id) so a slow /render can't clobber a newer one for the SAME doc
 
   const active = docs.find((d) => d.id === activeId) || null;
   const propertyId = active ? active.propertyId : defaultProp;
@@ -302,6 +302,7 @@ export default function App() {
     setOpenSection("upload");
   }
   function closeTab(id) {
+    delete renderSeq.current[id];   // drop the closed doc's per-doc render counter
     setDocs((ds) => {
       const idx = ds.findIndex((d) => d.id === id);
       const next = ds.filter((d) => d.id !== id);
@@ -440,10 +441,23 @@ export default function App() {
     });
   }
 
+  // Shared expired-upload recovery for every /render caller (preview + the two
+  // download paths). The uploads cache sweep makes a doc_id go stale after the
+  // TTL; the backend then returns 404 "Upload expired"/"not found". When that's
+  // the failure, clear docId so the editor stops believing the doc is live and
+  // tells the user to re-upload — instead of surfacing a cryptic raw message.
+  // Returns true if it handled the error (caller should not surface it further).
+  function handleExpiredUpload(d, e) {
+    if (!/expired|not found/i.test(e.message)) return false;
+    toast("This unit's upload expired — re-upload the DXF.", "error");
+    patchDoc(d.id, { docId: null });
+    return true;
+  }
+
   async function doRender(save, asNew = false) {
     const d = docs.find((x) => x.id === activeId);
     if (!d || !d.docId) return;
-    const mySeq = ++renderSeq.current;   // claim the latest slot for preview output
+    const mySeq = (renderSeq.current[d.id] = (renderSeq.current[d.id] || 0) + 1);   // claim the latest slot for THIS doc's preview output
     if (save) setSaving(true); else setRendering(true);
     try {
       const res = await renderSheet({
@@ -451,7 +465,7 @@ export default function App() {
         metadata: d.meta, rooms: d.rooms, keyplan: d.keyplan || null,
         sheet_id: asNew ? null : (d.savedId || null), save,
       });
-      const latest = mySeq === renderSeq.current;
+      const latest = mySeq === renderSeq.current[d.id];
       patchDoc(d.id, {
         // only the newest render may repaint the preview — an earlier response
         // resolving after a newer one must not overwrite fresher geometry
@@ -469,11 +483,8 @@ export default function App() {
         refreshSheets();
       }
     } catch (e) {
-      if (/expired|not found/i.test(e.message)) {
-        toast("This unit's upload expired — re-upload the DXF.", "error");
-        patchDoc(d.id, { docId: null });
-      } else if (save || mySeq === renderSeq.current) {
-        // surface save failures always; suppress errors from a stale preview
+      // surface save failures always; suppress errors from a stale preview
+      if (!handleExpiredUpload(d, e) && (save || mySeq === renderSeq.current[d.id])) {
         patchDoc(d.id, { renderError: e.message });
       }
     } finally {
@@ -560,7 +571,7 @@ export default function App() {
       a.download = `${exportName(d.propertyId, d.meta.title)}.png`;
       a.click();
     } catch (e) {
-      toast(e.message, "error");
+      if (!handleExpiredUpload(d, e)) toast(e.message, "error");
     } finally {
       setPngBusy(false);
     }
@@ -587,7 +598,7 @@ export default function App() {
       a.click();
       if (kind !== "png") URL.revokeObjectURL(a.href);
     } catch (e) {
-      toast(e.message, "error");
+      if (!handleExpiredUpload(d, e)) toast(e.message, "error");
     } finally {
       setPngBusy(false);
     }
