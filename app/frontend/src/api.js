@@ -23,10 +23,13 @@ export async function listProperties() {
   return jget("/properties");
 }
 
-export async function parseFile(file, propertyId) {
+export async function parseFile(file, propertyId, layerMap) {
   const fd = new FormData();
   fd.append("file", file);
   if (propertyId) fd.append("property_id", propertyId);
+  // layerMap is an optional manual override (the corrected detected mapping):
+  // re-parse the same file with the roles the user confirmed.
+  if (layerMap) fd.append("layer_map", JSON.stringify(layerMap));
   const r = await fetch(BASE + "/parse", { method: "POST", body: fd });
   return handle(r, "Parse failed");
 }

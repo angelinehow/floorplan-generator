@@ -73,7 +73,7 @@ function seedBrandStrip(initial) {
   return fonts.length ? { swatches: [], fonts, source: "saved" } : null;
 }
 
-export default function PropertySetup({ initial, onClose, onSaved, onDeleted }) {
+export default function PropertySetup({ initial, seedLayerMap, onClose, onSaved, onDeleted }) {
   const isNew = !initial;
   const [p, setP] = useState(() => ({
     id: initial?.id || "",
@@ -100,7 +100,9 @@ export default function PropertySetup({ initial, onClose, onSaved, onDeleted }) 
     brand_swatches: initial?.brand_swatches || null,
     brand_fonts: initial?.brand_fonts || null,
     font_faces: initial?.font_faces || null,
-    layer_map: initial?.layer_map || DEFAULT_LAYER_MAP,
+    // For a new property seeded from upload auto-detection, pre-fill the layer
+    // map with the detected roles so the user just confirms + names it.
+    layer_map: initial?.layer_map || seedLayerMap || DEFAULT_LAYER_MAP,
   }));
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
