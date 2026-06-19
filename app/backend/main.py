@@ -321,6 +321,21 @@ async def upload_plate(file: UploadFile = File(...)):
     return {"plate_id": plate_id, "width": w, "height": h}
 
 
+@app.get("/plate/{plate_id}")
+def get_plate(plate_id: str):
+    """Serve a previously uploaded plate image. A saved key plan persists only
+    the plate_id, so re-opening or restoring a sheet needs this to repaint the
+    box-placement picker."""
+    _safe_id(plate_id, "plate id")
+    for fn in glob.glob(os.path.join(UP_DIR, f"{plate_id}_plate*")):
+        media = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
+                 ".webp": "image/webp", ".bmp": "image/bmp"}.get(
+                     os.path.splitext(fn)[1].lower(), "image/png")
+        with open(fn, "rb") as f:
+            return Response(content=f.read(), media_type=media)
+    raise HTTPException(status_code=404, detail="Plate not found or expired.")
+
+
 class TraceRequest(BaseModel):
     plate_id: str
     seal: int = 35

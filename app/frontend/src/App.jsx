@@ -783,6 +783,7 @@ export default function App() {
               </div>
 
               <KeyPlanPanel key={active.id}
+                initial={active.keyplan}
                 palette={(properties.find((p) => p.id === propertyId) || {}).palette}
                 onChange={(kp) => patchActive({ keyplan: kp })} />
             </>

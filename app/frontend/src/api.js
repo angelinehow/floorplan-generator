@@ -47,6 +47,10 @@ export async function uploadPlate(file) {
   return handle(r, "Plate upload failed");
 }
 
+export function plateUrl(plateId) {
+  return `${BASE}/plate/${plateId}`;
+}
+
 export async function tracePlate(plateId, seal, palette) {
   const r = await fetch(BASE + "/plate/trace", {
     method: "POST",
