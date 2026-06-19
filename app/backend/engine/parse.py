@@ -117,7 +117,7 @@ def _wall_segments(prims, wall_layers):
                 segs.append((a[0], a[1], b[0], b[1]))
         else:  # hatch: close each polygon
             for poly in data:
-                for a, b in zip(poly, poly + poly[:1]):
+                for a, b in zip(poly, poly[1:] + poly[:1]):
                     segs.append((a[0], a[1], b[0], b[1]))
     return segs
 

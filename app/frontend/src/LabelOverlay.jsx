@@ -9,8 +9,9 @@ import React, { useLayoutEffect, useRef, useState, useCallback } from "react";
 export default function LabelOverlay({ svg, meta, onMove, onReset, showHandles = true }) {
   const wrapRef = useRef(null);
   const [scale, setScale] = useState(1);
-  const [drag, setDrag] = useState(null);     // {i, x, y} viewBox coords
+  const [drag, setDrag] = useState(null);     // {i, x, y, sx, sy} viewBox coords
   const [selected, setSelected] = useState(null);
+  const [pending, setPending] = useState(null); // {i, x, y} viewBox coords, local nudge accumulator
 
   const page = (meta && meta.page) || { w: 1000, h: 1080 };
   const placements = (meta && meta.placements) || [];
@@ -25,6 +26,10 @@ export default function LabelOverlay({ svg, meta, onMove, onReset, showHandles =
     if (wrapRef.current) ro.observe(wrapRef.current);
     return () => ro.disconnect();
   }, [measure, svg]);
+
+  // Invalidate the local nudge accumulator when fresh placements arrive (a new
+  // render) or a different label is selected, so it never positions from stale base.
+  useLayoutEffect(() => { setPending(null); }, [meta, selected]);
 
   function toDxf(vbx, vby) {
     const { tx, ty, s } = meta.transform;
@@ -42,9 +47,11 @@ export default function LabelOverlay({ svg, meta, onMove, onReset, showHandles =
     e.target.setPointerCapture?.(e.pointerId);
     const [vx, vy] = pointerVB(e);
     setSelected(p.i);
+    wrapRef.current?.focus();
     // Remember where on the handle we grabbed so the label tracks the cursor
-    // from that point instead of snapping its anchor under the pointer.
-    setDrag({ i: p.i, x: p.px, y: p.py, ox: vx - p.px, oy: vy - p.py });
+    // from that point instead of snapping its anchor under the pointer. sx/sy
+    // record the start position so endDrag can tell a click from a real drag.
+    setDrag({ i: p.i, x: p.px, y: p.py, sx: p.px, sy: p.py, ox: vx - p.px, oy: vy - p.py });
   }
   function onPointerMove(e) {
     if (!drag || !wrapRef.current) return;
@@ -53,8 +60,12 @@ export default function LabelOverlay({ svg, meta, onMove, onReset, showHandles =
   }
   function endDrag() {
     if (!drag || !meta) return;
-    const [dx, dy] = toDxf(drag.x, drag.y);
-    onMove(drag.i, dx, dy);
+    // Only commit an override if the pointer actually moved beyond a small
+    // threshold (viewBox px); a sub-threshold drag is just a selecting click.
+    if (Math.hypot(drag.x - drag.sx, drag.y - drag.sy) >= 3) {
+      const [dx, dy] = toDxf(drag.x, drag.y);
+      onMove(drag.i, dx, dy);
+    }
     setDrag(null);
   }
 
@@ -67,7 +78,12 @@ export default function LabelOverlay({ svg, meta, onMove, onReset, showHandles =
     e.preventDefault();
     const p = placements.find((q) => q.i === selected);
     if (!p) return;
-    const [dx, dy] = toDxf(p.px + d[0], p.py + d[1]);
+    // Accumulate from the last intended position (local pending), not the last
+    // rendered one, so rapid presses within the render-debounce window add up.
+    const base = pending && pending.i === selected ? pending : { i: selected, x: p.px, y: p.py };
+    const nx = base.x + d[0], ny = base.y + d[1];
+    setPending({ i: selected, x: nx, y: ny });
+    const [dx, dy] = toDxf(nx, ny);
     onMove(selected, dx, dy);
   }
 
@@ -86,8 +102,9 @@ export default function LabelOverlay({ svg, meta, onMove, onReset, showHandles =
       {showHandles && <div className="handles">
         {placements.map((p) => {
           const live = drag && drag.i === p.i ? drag : null;
-          const left = (live ? live.x : p.px) * scale;
-          const top = (live ? live.y : p.py) * scale;
+          const pend = !live && pending && pending.i === p.i ? pending : null;
+          const left = (live ? live.x : pend ? pend.x : p.px) * scale;
+          const top = (live ? live.y : pend ? pend.y : p.py) * scale;
           const cls = "handle" + (p.overridden ? " moved" : "") +
                       (live ? " dragging" : "") + (selected === p.i ? " selected" : "");
           return (
@@ -96,7 +113,7 @@ export default function LabelOverlay({ svg, meta, onMove, onReset, showHandles =
               className={cls}
               style={{ left, top }}
               onPointerDown={(e) => startDrag(e, p)}
-              onClick={(e) => { e.stopPropagation(); setSelected(p.i); }}
+              onClick={(e) => { e.stopPropagation(); setSelected(p.i); wrapRef.current?.focus(); }}
               onDoubleClick={() => onReset(p.i)}
             >
               {live
