@@ -11,8 +11,8 @@ The palette is the reliable part:
 `dark`/`light` are dependable. `accent` works well on a real brand guide where
 the brand color is a sizeable swatch; on a *finished* marketing sheet the accent
 is a hair of the pixels and gets quantized away, so it degrades to the most
-colorful tone present. `mid` rarely matches a brand's secondary tint. Because of
-all that we also return *every* dominant swatch and let the user re-pick in the UI.
+colorful tone present. `mid` rarely matches a brand's secondary tint. Thus 
+we return *every* dominant swatch and let the user re-pick in the UI.
 
 Fonts (PDF only) are returned as raw embedded names for the user to copy — never
 auto-wired into the property's serif/sans stacks. The names aren't CSS font
@@ -22,6 +22,7 @@ fall back anyway (see CLAUDE.md). Surfacing them as hints is the honest contract
 
 import io
 import re
+from typing import cast
 
 from PIL import Image
 
@@ -43,7 +44,7 @@ def extract_brand(raw: bytes, filename: str = "") -> dict:
     Returns: {
       "source":   "pdf" | "image",
       "palette":  {"dark","accent","mid","light"} hex strings,
-      "swatches": [{"hex","frac","luminance","saturation"}, ...] frac-desc,
+      "swatches": [{"hex","frac","luminance","chroma"}, ...] frac-desc,
       "fonts":    [str, ...] embedded font family names (PDF only; else []),
     }
     """
@@ -135,8 +136,9 @@ def _dominant_colors(img: Image.Image) -> list[dict]:
     img = img.convert("RGB")
     img.thumbnail((_MAX_DIM, _MAX_DIM))
     quant = img.quantize(colors=_QUANT_COLORS, method=Image.Quantize.MEDIANCUT)
-    palette = quant.getpalette()  # flat [r,g,b, r,g,b, ...]
-    counts = quant.getcolors() or []  # [(count, index), ...]
+    palette = quant.getpalette() or []  # flat [r,g,b, r,g,b, ...]
+    # P-mode quantize -> (count, palette_index); narrow the loose stub union.
+    counts = cast("list[tuple[int, int]]", quant.getcolors() or [])  # [(count, index), ...]
     total = sum(c for c, _ in counts) or 1
 
     bins = []

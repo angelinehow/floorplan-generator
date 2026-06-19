@@ -297,8 +297,12 @@ def _collect_entities(entity, block_name, depth, out_geom, out_text, role_sets):
                               (float(e[0]), float(e[1]))], block_name])
 
         elif dxftype in ("LWPOLYLINE", "POLYLINE"):
+            # LWPolyline/Polyline2d don't expose .flattening() directly (and the
+            # method is absent entirely in some ezdxf versions), so go through a
+            # Path — which also honours arc bulges. Without this, polyline walls
+            # are silently dropped and a polyline-only export looks empty.
             pts = _cap_points([(float(p[0]), float(p[1]))
-                               for p in entity.flattening(FLATTEN_DIST)])
+                               for p in ezpath.make_path(entity).flattening(FLATTEN_DIST)])
             if len(pts) >= 2:
                 out_geom.append([layer, "line", pts, block_name])
 
@@ -397,7 +401,7 @@ def parse_dxf(filepath, layer_map=None, seed_box_frac=0.13):
             f"whole-floor or fully-detailed drawing.")
 
     labels, ignored = [], []
-    suggestions = {"title": None, "suite": None, "sf": None}
+    suggestions: dict[str, str | None] = {"title": None, "suite": None, "sf": None}
 
     for t in raw_text:
         txt = t["text"]

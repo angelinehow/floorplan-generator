@@ -53,6 +53,26 @@ const slug = (s) =>
 
 const numFrom = (s) => (String(s || "").match(/\d+/) || [""])[0];
 
+// When opening the editor, seed the brand panel so editing never requires
+// re-uploading the brand sheet. Colors: prefer the swatches detected from a
+// brand sheet (saved as brand_swatches), else fall back to the property's
+// current palette so an existing property always offers its colors to re-pick.
+// Fonts: restore the font-name hints detected in the brand PDF (saved as
+// brand_fonts) the same way.
+function seedBrandStrip(initial) {
+  const fonts = initial?.brand_fonts || [];
+  if (initial?.brand_swatches?.length)
+    return { swatches: initial.brand_swatches, fonts, source: "saved" };
+  const seen = new Set();
+  const swatches = [];
+  for (const hex of Object.values(initial?.palette || {})) {
+    const h = String(hex || "").toUpperCase();
+    if (h && !seen.has(h)) { seen.add(h); swatches.push({ hex: h }); }
+  }
+  if (swatches.length) return { swatches, fonts, source: "palette" };
+  return fonts.length ? { swatches: [], fonts, source: "saved" } : null;
+}
+
 export default function PropertySetup({ initial, onClose, onSaved, onDeleted }) {
   const isNew = !initial;
   const [p, setP] = useState(() => ({
@@ -78,6 +98,7 @@ export default function PropertySetup({ initial, onClose, onSaved, onDeleted }) 
       sans: initial?.fonts?.sans || "'Helvetica Neue', Helvetica, Arial, sans-serif",
     },
     brand_swatches: initial?.brand_swatches || null,
+    brand_fonts: initial?.brand_fonts || null,
     font_faces: initial?.font_faces || null,
     layer_map: initial?.layer_map || DEFAULT_LAYER_MAP,
   }));
@@ -85,13 +106,10 @@ export default function PropertySetup({ initial, onClose, onSaved, onDeleted }) 
   const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState("");
   const [extracting, setExtracting] = useState(false);
-  // Seed the swatch strip from previously-detected colors so editing a property
-  // doesn't require re-uploading the brand file just to re-pick a color.
-  const [brand, setBrand] = useState(
-    initial?.brand_swatches?.length
-      ? { swatches: initial.brand_swatches, fonts: [], source: "saved" }
-      : null
-  );
+  // Seed the swatch strip so editing a property never requires re-uploading the
+  // brand file just to re-pick a color — from saved brand colors when present,
+  // otherwise from the property's current palette (see seedBrandStrip).
+  const [brand, setBrand] = useState(() => seedBrandStrip(initial));
   const [activeRole, setActiveRole] = useState(null);
   // For a new property, auto-derive lockup + watermark from the building number
   // in the name (e.g. "800 PRINCESS" -> "800") until the user edits them.
@@ -224,7 +242,8 @@ export default function PropertySetup({ initial, onClose, onSaved, onDeleted }) 
       const res = await extractBrand(file);
       setBrand(res);
       setP((o) => ({ ...o, palette: { ...o.palette, ...res.palette },
-                     brand_swatches: res.swatches || o.brand_swatches }));
+                     brand_swatches: res.swatches || o.brand_swatches,
+                     brand_fonts: res.fonts?.length ? res.fonts : o.brand_fonts }));
     } catch (e2) {
       setErr(e2.message);
     } finally {
@@ -361,14 +380,14 @@ export default function PropertySetup({ initial, onClose, onSaved, onDeleted }) 
             {brand && brand.swatches?.length > 0 && (
               <div className="brand-found">
                 <p className="subtle">
-                  Detected colors — {activeRole
+                  {brand.source === "palette" ? "Saved palette colors" : "Detected colors"} — {activeRole
                     ? <>click one to set <b>{activeRole}</b></>
                     : "click a role field above, then a swatch to assign it"}.
                 </p>
                 <div className="swatch-strip">
                   {brand.swatches.map((s) => (
                     <button type="button" key={s.hex} className="swatch-chip"
-                      title={`${s.hex} · ${Math.round(s.frac * 100)}% of image`}
+                      title={s.frac != null ? `${s.hex} · ${Math.round(s.frac * 100)}% of image` : s.hex}
                       disabled={!activeRole}
                       onClick={() => activeRole && setPal(activeRole, s.hex)}>
                       <span className="sw-dot" style={{ background: s.hex }} />

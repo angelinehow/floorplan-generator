@@ -59,6 +59,11 @@ rectangle. Users only correct the occasional miss, visually.
 Target: a clean, single-unit DXF → finished sheet in **under 2 minutes**, no tweaks needed in the
 common case.
 
+> **Batch variant (§11).** Step 1 also accepts **up to 10 DXF files at once**. The app parses them
+> through a visible queue and opens each successful one as its own **editable tab** — same review &
+> nudge flow as above, just N units staged side by side. Batch deliberately **does not auto-save to
+> the library**; the coordinator reviews each tab and exports it manually when it's ready.
+
 ---
 
 ## 3. Architecture
@@ -191,3 +196,65 @@ Each step is independently shippable; stop wherever it's "good enough" for the t
 - Built-in fixtures (kitchen/bath) stay; **loose furniture dropped** by block-name match.
 - Open-plan living/kitchen **dimensions are judgment calls** — make them user-editable, don't trust
   raw wall-to-wall.
+
+---
+
+## 11. Batch processing (multi-file upload)
+
+The single-unit flow (§2) is the core. Batch is an **on-ramp to it**, not a separate pipeline: it
+parses several files, then drops the user into the exact same review-and-nudge editor, one tab per
+unit. There is no headless "render 10 sheets unattended" mode — this app is human-in-the-loop by
+design (§4), and batch respects that.
+
+**Why 10, and why it's a workflow limit not a machine limit.** The backend could parse far more; the
+real ceiling is how many sheets a coordinator can actually *review* in one sitting. Each open tab
+also carries a full SVG + draggable overlay (client) and a parse cache entry (server,
+`data/uploads/`). Past ~10 the review backlog stops being a single-pass task and the browser gets
+heavy. So: **hard cap of 10 files per batch**, framed to the user as a workflow limit.
+
+**Upload copy (DXF-only baseline):**
+
+> **Select up to 10 DXF files.** Each opens in its own tab for review and editing. Nothing is saved
+> to the library automatically — export each sheet when it's ready.
+
+Widen the first line to "Select up to 10 DXF or DWG files" only when `/capabilities` reports the ODA
+converter is present (same gate the single-file uploader already uses); otherwise DXF-only.
+
+**The queue (so we're not blindly processing).** A panel with one row per selected file, each
+showing live status: `queued → parsing → ready` or `failed: <reason>`.
+
+- **Concurrency of 2.** The queue *is* the throttle — parsing is CPU-bound (the int64 occupancy
+  integral image, up to `MAX_PRIMS` 200k per file), so we run at most **two parses at a time** and
+  let the rest wait in `queued`. Never fan all 10 out at once.
+- **Per-file failure isolation.** A file that fails to parse — most commonly a sheet export instead
+  of a view export, which raises `ParseError` (§5, §10) — surfaces *that row* as `failed` with its
+  reason and the batch continues. One bad file never sinks the other nine.
+- **Reuses existing limits.** Each file still passes through the per-file guards in `parse.py`
+  (`MAX_UPLOAD_MB` 60, `MAX_PRIMS` 200k, oversized-polyline downsampling). Batch adds the file-count
+  cap on top; it does not relax any of these.
+
+**Tabs already exist — this is the cheap part (as built).** `App.jsx` is already a multi-document
+workspace (a `docs` array, a tab strip, per-tab editor state, multi-doc localStorage autosave), so
+batch did **not** require a frontend rearchitecture. Implementation is frontend-only and small:
+- `handleFiles(fileList)` routes a single file to the existing in-place flow and two-or-more to
+  `runBatch`. A shared `parsedDocFields(d, fileName)` helper maps a `/parse` response onto doc fields
+  so the single and batch paths can't drift.
+- `runBatch` runs `BATCH_CONCURRENCY` workers over a shared cursor; each success appends a ready tab,
+  the first success becomes active, and failures are recorded against their queue row.
+- No backend change: `/parse` is already per-file, each `doc_id` independent; nothing server-side
+  knows a batch happened.
+
+**Failure reporting (so nothing fails silently).** Failures stay in the queue panel with their reason
+*and* a summary toast names the rejected files when the batch settles ("Opened 7 files; rejected 1:
+foo.dxf"). The valid files all open regardless. A hover info circle on the upload header explains the
+batch semantics (up-to-N, tabs, no auto-save).
+
+**No auto-save — and it fits cleanly.** Saving to the library is already a manual export action
+(§2.7). Batch changes nothing server-side about saving: it parses + opens and never touches
+`data/sheets/`. Each tab exports independently when the user is happy with it. The 24h uploads-cache
+sweep (`UPLOAD_TTL_HOURS`) applies unchanged — 10 parses sit in `data/uploads/` like any other and
+get swept normally; a tab left open past the TTL hits the existing "Upload expired" 404 path.
+
+**Suggested build order:** slot after §8.2 (minimal single-file frontend works) and before
+drag-to-fix, *or* after drag-to-fix if you'd rather batch inherit a finished editor. The latter is
+usually less rework.

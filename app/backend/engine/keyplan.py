@@ -47,16 +47,18 @@ def _data_uri(plate_bytes):
 
 
 def _north_arrow(cx, cy, r, deg, dark, accent):
-    """A small north arrow rotated by `deg` (clockwise from up)."""
+    """A small, unobtrusive north arrow rotated by `deg` (clockwise from up).
+    No opaque disc — a faint ring + accent needle that sits over the plan
+    without masking it."""
     return (
-        f'<g transform="translate({cx:.1f},{cy:.1f}) rotate({deg})">'
-        f'<circle r="{r:.1f}" fill="#FFFFFF" stroke="{dark}" '
-        f'stroke-width="1" stroke-opacity="0.6"/>'
-        f'<polygon points="0,{-r*0.78:.1f} {r*0.34:.1f},{r*0.34:.1f} '
-        f'0,{r*0.12:.1f} {-r*0.34:.1f},{r*0.34:.1f}" fill="{accent}"/>'
-        f'<text x="0" y="{-r*0.92:.1f}" text-anchor="middle" '
-        f'font-family="{DEFAULT_SANS}" font-size="{r*0.72:.1f}" '
-        f'font-weight="bold" fill="{dark}">N</text></g>'
+        f'<g transform="translate({cx:.1f},{cy:.1f}) rotate({deg})" opacity="0.6">'
+        f'<circle r="{r:.1f}" fill="none" stroke="{dark}" '
+        f'stroke-width="0.8" stroke-opacity="0.45"/>'
+        f'<polygon points="0,{-r*0.72:.1f} {r*0.28:.1f},{r*0.28:.1f} '
+        f'0,{r*0.08:.1f} {-r*0.28:.1f},{r*0.28:.1f}" fill="{accent}"/>'
+        f'<text x="0" y="{-r*0.9:.1f}" text-anchor="middle" '
+        f'font-family="{DEFAULT_SANS}" font-size="{r*0.58:.1f}" '
+        f'fill="{dark}">N</text></g>'
     )
 
 
@@ -98,7 +100,7 @@ def keyplan_group(plate_bytes, box, ox, oy, w, h, palette,
                      f'height="{rh:.1f}" fill="{accent}" fill-opacity="0.55" '
                      f'stroke="{accent}" stroke-width="1.5"/>')
     if with_north:
-        nr = min(w, h) * 0.09
+        nr = min(w, h) * 0.06
         parts.append(_north_arrow(ox + w - nr - 6, oy + nr + 6, nr,
                                   north_deg, dark, accent))
     return "\n".join(parts)

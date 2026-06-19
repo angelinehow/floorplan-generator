@@ -64,6 +64,9 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* positioning context for .infotip so it stays within the sidebar width
+     rather than overflowing from the small info dot */
+  position: relative;
 }
 .rooms-head {
   display: flex;
@@ -83,6 +86,43 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.step h3 .infodot {
+  cursor: help;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.7;
+}
+.step h3 .infodot:hover, .step h3 .infodot:focus { opacity: 1; outline: none; }
+.step h3 .infodot .infotip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 230px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  background: var(--charcoal);
+  color: var(--chalk);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.45;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  /* instant on hover/focus — no transition delay */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.step h3 .infodot:hover .infotip,
+.step h3 .infodot:focus .infotip {
+  opacity: 1;
+  visibility: visible;
 }
 
 label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
@@ -132,6 +172,7 @@ select, input[type="text"] {
   border: 1px solid var(--line);
 }
 .btn.ember { background: var(--ember); }
+.btn.ghost.active { background: #fbeae7; color: #b23a2e; border-color: #e3b6a8; }
 .btnrow { display: flex; gap: 8px; margin-top: 8px; }
 .btnrow .btn { width: auto; flex: 1; }
 
@@ -183,9 +224,57 @@ select, input[type="text"] {
   margin-bottom: 12px;
 }
 
+/* ---- batch upload queue ---- */
+.batchqueue {
+  width: 100%;
+  max-width: 760px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+}
+.batchqueue-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.batchqueue-head .subtle { margin: 0; }
+.batchqueue-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.batchqueue-row .qname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batchqueue-row .qstatus { flex-shrink: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batchqueue-row .qerr { color: #8a3d28; }
+.batchqueue-row .linkish {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--ember); font: inherit; text-decoration: underline;
+}
+.qdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #c9c2b6; }
+.qdot.parsing { background: #d9a441; animation: qpulse 1s ease-in-out infinite; }
+.qdot.ready { background: #4c8a3d; }
+.qdot.failed { background: #8a3d28; }
+@keyframes qpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
 /* ---- right preview stage ---- */
 .stage {
   flex: 1;
+  /* min-width:0 lets this flex item shrink below its content's intrinsic width.
+     Without it, the sidebar + vertical tab rail can squeeze the stage so its
+     max-width:760px children (batch queue, sheet) overflow past the viewport. */
+  min-width: 0;
   padding: 32px;
   display: flex;
   flex-direction: column;
@@ -228,6 +317,12 @@ select, input[type="text"] {
 
 /* download dropdown */
 .dropdown { position: relative; }
+.dropdown.split { display: flex; }
+.dropdown.split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.dropdown.split > .btn.caret {
+  width: auto; padding: 0 9px; border-top-left-radius: 0; border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.35); font-size: 11px;
+}
 .dropdown-backdrop { position: fixed; inset: 0; z-index: 15; }
 .menu {
   position: absolute;
@@ -254,6 +349,8 @@ select, input[type="text"] {
 }
 .menu button:hover { background: var(--limestone); }
 .menu button:disabled { opacity: 0.5; cursor: default; }
+.menu-sep { height: 1px; background: var(--line); margin: 4px 0; }
+.menu-label { padding: 6px 14px 2px; font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }
 
 /* ---- document + library tabs ---- */
 /* Sticky header holding the action row (top) above the tab strip (below). */
@@ -303,7 +400,14 @@ select, input[type="text"] {
 .tab .tablabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
 .tabx { font-size: 14px; line-height: 1; color: var(--muted); border-radius: 3px; padding: 0 3px; }
 .tabx:hover { color: #8a3d28; background: rgba(138, 61, 40, 0.12); }
-.tab.newtab { font-size: 16px; padding: 4px 11px; color: var(--ember); }
+.tab.newtab {
+  font-size: 16px;
+  padding: 4px 11px;
+  color: var(--ember);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.tab.newtab:hover { border-color: var(--ember); background: rgba(193, 127, 58, 0.08); }
 .stagehead .actions {
   display: flex;
   align-items: center;   /* centered within the 42px strip, level with the tabs */
@@ -311,6 +415,10 @@ select, input[type="text"] {
   margin-left: auto;
 }
 .stagehead .actions .btn { width: auto; padding: 8px 14px; white-space: nowrap; }
+/* Right cluster of the tab strip: orientation toggle + (when ready) the actions.
+   Pushed to the far right; in vertical mode it's the row's only content. */
+.tabbar-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.orient-toggle { width: auto; padding: 6px 11px; font-size: 15px; line-height: 1; }
 /* Reload + label-toggle: sit inline with the status line, pushed to the right. */
 .actions-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .actions-right .btn { width: auto; padding: 6px 12px; white-space: nowrap; font-size: 12px; }
@@ -319,11 +427,64 @@ select, input[type="text"] {
 .tab.library-tab {
   margin-left: 8px;
   color: var(--ember);
-  border-color: rgba(193, 127, 58, 0.45);
+  border: 1px solid rgba(193, 127, 58, 0.45);
+  border-radius: 6px;
   font-weight: 600;
 }
 .tab.library-tab:hover { color: var(--ember); background: rgba(193, 127, 58, 0.08); }
 .tab.library-tab.active { color: var(--charcoal); }
+
+/* ---- vertical tab rail (its own column, between sidebar and stage) ---- */
+.tabrail {
+  flex: none;
+  width: 170px;          /* default; overridden by inline width when resized */
+  background: var(--chalk);
+  border-right: 1px solid var(--line);
+  /* Pinned full-height like the sidebar so tabs stay put while the stage scrolls. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 8px;
+}
+/* Collapse control, right-aligned above the tabs (mirrors the sidebar). */
+.tabrail-head { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.tabrail-head .collapsebtn { padding: 2px 4px; }
+/* Full-width, stacked rows. A transparent left border reserves space so the
+   active ember accent doesn't shift the label. */
+.tabrail .tab {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: 6px;
+  margin-bottom: 0;
+  padding: 8px 10px;
+}
+.tabrail .tab.active {
+  background: #fff;
+  border-color: var(--line);
+  border-left-color: var(--ember);
+}
+/* Let the (already middle-truncated) filename wrap to a second line instead of
+   being clipped, so both ends stay visible in the narrow rail. */
+.tabrail .tab .tablabel {
+  max-width: none;
+  flex: 1;
+  white-space: normal;
+  overflow: visible;
+  word-break: break-word;
+  line-height: 1.3;
+}
+.tabrail .tab.newtab { justify-content: center; color: var(--ember); border: 1px solid var(--line); }
+.tabrail .tab.newtab:hover { border-color: var(--ember); background: rgba(193, 127, 58, 0.08); }
+.tabrail .tab.library-tab { margin-left: 0; margin-top: 6px; border: 1px solid rgba(193, 127, 58, 0.45); }
 
 .statusline {
   width: 100%;
@@ -414,6 +575,12 @@ select, input[type="text"] {
 .capttl { font-size: 12px; color: var(--ink); font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .capsub { margin: 2px 0 6px; }
 .kpbadge { background: var(--ember); color: #fff; font-size: 8px; font-weight: 700; letter-spacing: 0.5px; padding: 1px 5px; border-radius: 8px; }
+.renamepen {
+  border: none; background: none; cursor: pointer; padding: 0 2px; line-height: 1;
+  font-size: 11px; color: var(--muted, #999); opacity: 0; transition: opacity 0.12s;
+}
+.libcard:hover .renamepen { opacity: 0.7; }
+.renamepen:hover { opacity: 1; color: var(--ember); }
 .libactions { display: flex; flex-wrap: wrap; gap: 5px; }
 .libactions a, .libactions button {
   font-size: 10.5px; padding: 3px 7px; border-radius: 4px; border: 1px solid var(--line);
@@ -423,6 +590,20 @@ select, input[type="text"] {
 .libhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .libhead h4 { margin: 0; }
 .libsearch { width: 200px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+/* property filter chips */
+.libfilters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.libchip {
+  font-size: 11px; padding: 4px 11px; border-radius: 20px;
+  border: 1px solid var(--line); background: #fff; color: var(--muted); cursor: pointer;
+}
+.libchip:hover { color: var(--charcoal); }
+.libchip.on { background: var(--charcoal); color: var(--chalk); border-color: var(--charcoal); }
+/* per-card property name + inline rename field */
+.libprop { font-size: 9.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--ember); margin-bottom: 2px; }
+.librename {
+  width: 100%; font-size: 12px; font-weight: 600; color: var(--ink);
+  padding: 2px 5px; border: 1px solid var(--ember); border-radius: 4px; margin-bottom: 2px;
+}
 
 /* ---- selected label handle + nudge hint ---- */
 .handle.selected .movearrow { box-shadow: 0 0 0 3px rgba(193, 127, 58, 0.5), 0 1px 3px rgba(0, 0, 0, 0.25); }
@@ -438,6 +619,13 @@ select, input[type="text"] {
 }
 .toast.success { background: #2f5d43; }
 .toast.error { background: #8a3d28; }
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast-action {
+  background: rgba(255, 255, 255, 0.18); color: #fff; border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 5px; padding: 3px 10px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  flex-shrink: 0;
+}
+.toast-action:hover { background: rgba(255, 255, 255, 0.3); }
 @keyframes toastin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 .spin { font-size: 12px; color: var(--ember); }

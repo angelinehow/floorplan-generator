@@ -272,6 +272,51 @@ def render(prims, config):
         return "\n".join(f'<polyline points="{_pts_attr(p)}" {style}/>'
                          for p in lines if len(p) >= 2)
 
+    # ---- "plan only" export: just the line drawing -------------------------
+    # The bare floor plan (walls/poché/doors/glazing in WALL ink + room labels),
+    # cropped tight with a transparent background — no header, footer, watermark
+    # or key-plan chrome. Default output is unaffected; this is a separate path.
+    if config.get("plan_only"):
+        geom = (
+            '<g stroke-linecap="round" stroke-linejoin="round" fill="none">\n'
+            f'<path d="{" ".join(wall_fills)}" fill="{WALL}" stroke="none" fill-rule="nonzero"/>\n'
+            + polyline_group(wall_lines, f'stroke="{WALL}" stroke-width="1.6"') + "\n"
+            + polyline_group(glaz_lines, f'stroke="{WALL}" stroke-width="0.9"') + "\n"
+            + polyline_group(door_lines, f'stroke="{WALL}" stroke-width="1.0"') + "\n"
+            + polyline_group(swing_lines, f'stroke="{WALL}" stroke-width="0.7" stroke-opacity="0.45"') + "\n"
+            + polyline_group(thin_lines, f'stroke="{WALL}" stroke-width="0.6" stroke-opacity="0.55"') + "\n"
+            + polyline_group(dash_lines, f'stroke="{WALL}" stroke-width="0.6" stroke-opacity="0.35" stroke-dasharray="4 3"') + "\n"
+            "</g>"
+        )
+        labels = "\n".join(room_labels)
+        # crop to the plan bounds, expanded to include any labels placed at the edge
+        x0, x1 = X(minx), X(maxx)
+        y0, y1 = Y(maxy), Y(miny)
+        for p in placements:
+            x0 = min(x0, p["px"] - p["bw"] / 2); x1 = max(x1, p["px"] + p["bw"] / 2)
+            y0 = min(y0, p["py"] - p["bh"] / 2); y1 = max(y1, p["py"] + p["bh"] / 2)
+        # generous margin so the exported asset has breathing room on every
+        # edge — scales with the plan size, with a sensible floor
+        pad = max(64.0, 0.10 * max(x1 - x0, y1 - y0))
+        vbx, vby = x0 - pad, y0 - pad
+        vbw, vbh = (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad
+        bare = (
+            f'<svg xmlns="http://www.w3.org/2000/svg" '
+            f'viewBox="{vbx:.1f} {vby:.1f} {vbw:.1f} {vbh:.1f}" font-family="{SANS}">\n'
+            f'<rect x="{vbx:.1f}" y="{vby:.1f}" width="{vbw:.1f}" height="{vbh:.1f}" fill="#FFFFFF"/>\n'
+            f'{geom}\n{labels}\n</svg>'
+        )
+        out_w = min(2400, max(1000, round(vbw * 2)))
+        png_bytes = cairosvg.svg2png(bytestring=bare.encode("utf-8"), output_width=out_w)
+        meta = {
+            "transform": {"tx": round(tx, 4), "ty": round(ty, 4), "s": round(s, 6)},
+            "page": {"w": round(vbw, 1), "h": round(vbh, 1)},
+            "extents": {"minx": minx, "maxx": maxx, "miny": miny, "maxy": maxy},
+            "placements": placements,
+            "plan_only": True,
+        }
+        return bare, png_bytes, meta
+
     title = esc((md.get("title") or "").upper())
     suite = esc(md.get("suite") or "")
     sf = esc(md.get("sf") or "")
@@ -298,6 +343,33 @@ def render(prims, config):
             f'font-size="{wm_size:.0f}" fill="{ACCENT}" fill-opacity="0.07">{watermark}</text>')
     else:
         watermark_svg = ""
+    # Optional "SOLD OUT" status stamp: a bold centered diagonal mark laid *on
+    # top of* the finished plan and labels (unlike the ghost brand watermark
+    # above, which sits behind everything). Per-sheet flag carried in the unit
+    # metadata, so it persists on save, restores on re-open, and rides into the
+    # PNG export. The bare plan_only export never reaches here, so it stays clean.
+    sold_out_svg = ""
+    if md.get("sold_out"):
+        so_text = "SOLD OUT"
+        so_target_w = PAGE_W * 0.74          # how wide the mark should run
+        so_size, so_ls = 150.0, 8.0
+        tw = _text_w(so_text, so_size, so_ls)
+        if tw > so_target_w:                 # shrink to fit, keeping proportions
+            scale = so_target_w / tw
+            so_size, so_ls, tw = so_size * scale, so_ls * scale, so_target_w
+        pad_x, pad_y = so_size * 0.34, so_size * 0.30
+        box_w, box_h = tw + pad_x * 2, so_size + pad_y * 2
+        bx, by = wm_cx - box_w / 2, wm_cy - box_h / 2
+        SOLD = "#C0392B"
+        sold_out_svg = (
+            f'<g transform="rotate(-18 {wm_cx:.0f} {wm_cy:.0f})" opacity="0.62">'
+            f'<rect x="{bx:.0f}" y="{by:.0f}" width="{box_w:.0f}" height="{box_h:.0f}" '
+            f'rx="{so_size * 0.12:.0f}" fill="none" stroke="{SOLD}" '
+            f'stroke-width="{max(6.0, so_size * 0.06):.0f}"/>'
+            f'<text x="{wm_cx:.0f}" y="{wm_cy:.0f}" text-anchor="middle" '
+            f'dominant-baseline="central" font-family="{SANS}" font-weight="bold" '
+            f'font-size="{so_size:.0f}" letter-spacing="{so_ls:.1f}" fill="{SOLD}">'
+            f'{so_text}</text></g>')
     footer_addr = esc((md.get("footer_address") or "").upper())
     header_right = esc((md.get("header_right") or "FLOOR PLAN").upper())
     disclaimer = esc(md.get("disclaimer") or
@@ -365,6 +437,7 @@ def render(prims, config):
 {polyline_group(dash_lines, f'stroke="{WALL}" stroke-width="0.6" stroke-opacity="0.35" stroke-dasharray="4 3"')}
   </g>
 {chr(10).join(room_labels)}
+  {sold_out_svg}
   <rect y="{PAGE_H-FOOTER_H}" width="{PAGE_W}" height="{FOOTER_H}" fill="{DARK}"/>
   <text x="60" y="{PAGE_H-FOOTER_H+62}" font-family="{SERIF}" font-size="40" fill="#FFFFFF">{title}</text>
   <line x1="62" y1="{PAGE_H-FOOTER_H+80}" x2="122" y2="{PAGE_H-FOOTER_H+80}" stroke="{ACCENT}" stroke-width="2.5"/>

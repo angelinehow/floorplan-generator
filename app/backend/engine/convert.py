@@ -44,7 +44,9 @@ def converter_available():
 
 def dwg_to_dxf(dwg_path, out_dir=None, dxf_version="ACAD2018"):
     """
-    Convert a single DWG to DXF. Returns the path to the produced DXF.
+    Convert a single DWG to DXF. Returns the path to the produced DXF, written
+    beside the source so the caller can parse it. The temporary working
+    directories are always cleaned up, success or failure.
 
     ODA's CLI works on directories:
       ODAFileConverter <inDir> <outDir> <ver> DXF 0 1 <filter>
@@ -60,24 +62,36 @@ def dwg_to_dxf(dwg_path, out_dir=None, dxf_version="ACAD2018"):
 
     dwg_path = os.path.abspath(dwg_path)
     in_dir = tempfile.mkdtemp(prefix="dwgin_")
+    own_out = out_dir is None
     out_dir = out_dir or tempfile.mkdtemp(prefix="dxfout_")
     base = os.path.splitext(os.path.basename(dwg_path))[0]
-    shutil.copy(dwg_path, os.path.join(in_dir, base + ".dwg"))
-
-    cmd = [converter, in_dir, out_dir, dxf_version, "DXF", "0", "1", "*.DWG"]
     try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-    except subprocess.CalledProcessError as exc:
-        raise ConversionError(
-            f"ODA File Converter failed: {exc.stderr.decode(errors='ignore')[:300]}")
-    except subprocess.TimeoutExpired:
-        raise ConversionError("DWG conversion timed out.")
+        shutil.copy(dwg_path, os.path.join(in_dir, base + ".dwg"))
 
-    out_dxf = os.path.join(out_dir, base + ".dxf")
-    if not os.path.isfile(out_dxf):
-        # ODA sometimes cases the extension differently
-        for f in os.listdir(out_dir):
-            if f.lower().endswith(".dxf"):
-                return os.path.join(out_dir, f)
-        raise ConversionError("Conversion produced no DXF output.")
-    return out_dxf
+        cmd = [converter, in_dir, out_dir, dxf_version, "DXF", "0", "1", "*.DWG"]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        except subprocess.CalledProcessError as exc:
+            raise ConversionError(
+                f"ODA File Converter failed: {exc.stderr.decode(errors='ignore')[:300]}")
+        except subprocess.TimeoutExpired:
+            raise ConversionError("DWG conversion timed out.")
+
+        produced = os.path.join(out_dir, base + ".dxf")
+        if not os.path.isfile(produced):
+            # ODA sometimes cases the extension differently
+            produced = next((os.path.join(out_dir, f) for f in os.listdir(out_dir)
+                             if f.lower().endswith(".dxf")), None)
+            if produced is None:
+                raise ConversionError("Conversion produced no DXF output.")
+        # Move the result beside the source (a managed dir the uploads sweep
+        # owns) so the temp working dirs can be dropped without losing it.
+        final = os.path.splitext(dwg_path)[0] + ".converted.dxf"
+        if os.path.exists(final):
+            os.remove(final)
+        shutil.move(produced, final)
+        return final
+    finally:
+        shutil.rmtree(in_dir, ignore_errors=True)
+        if own_out:
+            shutil.rmtree(out_dir, ignore_errors=True)

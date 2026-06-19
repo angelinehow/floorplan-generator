@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { uploadPlate, tracePlate } from "./api.js";
+import { uploadPlate, tracePlate, plateUrl } from "./api.js";
+import { toast } from "./toast.js";
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
@@ -17,15 +18,22 @@ const clamp01 = (v) => Math.max(0, Math.min(1, v));
  * interior walls to find the unit — and the box fraction maps onto either look.
  *
  * Calls onChange(keyplanConfig | null) whenever the config is complete.
+ *
+ * `initial` is a previously-saved keyplan config (from re-open / session
+ * restore). The panel seeds its state from it so the UI matches what will
+ * actually render — otherwise the first interaction would emit a blank config
+ * and wipe the restored key plan. The panel is keyed by doc id upstream, so it
+ * remounts (and re-seeds) per tab.
  */
-export default function KeyPlanPanel({ onChange, palette }) {
-  const [on, setOn] = useState(false);
-  const [plate, setPlate] = useState(null);   // {plate_id, url}
-  const [box, setBox] = useState(null);        // [fx, fy, fw, fh]
-  const [floor, setFloor] = useState("");
-  const [placement, setPlacement] = useState("footer");
-  const [mode, setMode] = useState("traced");  // "traced" | "raw"
-  const [seal, setSeal] = useState(35);
+export default function KeyPlanPanel({ onChange, palette, initial }) {
+  const [on, setOn] = useState(!!initial);
+  const [plate, setPlate] = useState(          // {plate_id, url}
+    initial?.plate_id ? { plate_id: initial.plate_id, url: plateUrl(initial.plate_id) } : null);
+  const [box, setBox] = useState(initial?.box || null);   // [fx, fy, fw, fh]
+  const [floor, setFloor] = useState(initial?.floor_label || "");
+  const [placement, setPlacement] = useState(initial?.placement || "footer");
+  const [mode, setMode] = useState(initial?.mode || "traced");  // "traced" | "raw"
+  const [seal, setSeal] = useState(initial?.seal ?? 35);
   const [trace, setTrace] = useState(null);    // {preview, coverage}
   const [tracing, setTracing] = useState(false);
   const [drag, setDrag] = useState(null);
@@ -99,7 +107,7 @@ export default function KeyPlanPanel({ onChange, palette }) {
       setPlate(p);
       emit({ plate: p });
     } catch (e) {
-      alert(e.message);
+      toast(e.message, "error");
     } finally {
       setBusy(false);
     }
