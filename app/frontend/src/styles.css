@@ -186,6 +186,10 @@ select, input[type="text"] {
 /* ---- right preview stage ---- */
 .stage {
   flex: 1;
+  /* min-width:0 lets this flex item shrink below its content's intrinsic width.
+     Without it, the sidebar + vertical tab rail can squeeze the stage so its
+     max-width:760px children (batch queue, sheet) overflow past the viewport. */
+  min-width: 0;
   padding: 32px;
   display: flex;
   flex-direction: column;
@@ -309,7 +313,14 @@ select, input[type="text"] {
 .tab .tablabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
 .tabx { font-size: 14px; line-height: 1; color: var(--muted); border-radius: 3px; padding: 0 3px; }
 .tabx:hover { color: #8a3d28; background: rgba(138, 61, 40, 0.12); }
-.tab.newtab { font-size: 16px; padding: 4px 11px; color: var(--ember); }
+.tab.newtab {
+  font-size: 16px;
+  padding: 4px 11px;
+  color: var(--ember);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.tab.newtab:hover { border-color: var(--ember); background: rgba(193, 127, 58, 0.08); }
 .stagehead .actions {
   display: flex;
   align-items: center;   /* centered within the 42px strip, level with the tabs */
@@ -317,6 +328,10 @@ select, input[type="text"] {
   margin-left: auto;
 }
 .stagehead .actions .btn { width: auto; padding: 8px 14px; white-space: nowrap; }
+/* Right cluster of the tab strip: orientation toggle + (when ready) the actions.
+   Pushed to the far right; in vertical mode it's the row's only content. */
+.tabbar-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.orient-toggle { width: auto; padding: 6px 11px; font-size: 15px; line-height: 1; }
 /* Reload + label-toggle: sit inline with the status line, pushed to the right. */
 .actions-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .actions-right .btn { width: auto; padding: 6px 12px; white-space: nowrap; font-size: 12px; }
@@ -325,11 +340,64 @@ select, input[type="text"] {
 .tab.library-tab {
   margin-left: 8px;
   color: var(--ember);
-  border-color: rgba(193, 127, 58, 0.45);
+  border: 1px solid rgba(193, 127, 58, 0.45);
+  border-radius: 6px;
   font-weight: 600;
 }
 .tab.library-tab:hover { color: var(--ember); background: rgba(193, 127, 58, 0.08); }
 .tab.library-tab.active { color: var(--charcoal); }
+
+/* ---- vertical tab rail (its own column, between sidebar and stage) ---- */
+.tabrail {
+  flex: none;
+  width: 170px;          /* default; overridden by inline width when resized */
+  background: var(--chalk);
+  border-right: 1px solid var(--line);
+  /* Pinned full-height like the sidebar so tabs stay put while the stage scrolls. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 8px;
+}
+/* Collapse control, right-aligned above the tabs (mirrors the sidebar). */
+.tabrail-head { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+.tabrail-head .collapsebtn { padding: 2px 4px; }
+/* Full-width, stacked rows. A transparent left border reserves space so the
+   active ember accent doesn't shift the label. */
+.tabrail .tab {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: 6px;
+  margin-bottom: 0;
+  padding: 8px 10px;
+}
+.tabrail .tab.active {
+  background: #fff;
+  border-color: var(--line);
+  border-left-color: var(--ember);
+}
+/* Let the (already middle-truncated) filename wrap to a second line instead of
+   being clipped, so both ends stay visible in the narrow rail. */
+.tabrail .tab .tablabel {
+  max-width: none;
+  flex: 1;
+  white-space: normal;
+  overflow: visible;
+  word-break: break-word;
+  line-height: 1.3;
+}
+.tabrail .tab.newtab { justify-content: center; color: var(--ember); border: 1px solid var(--line); }
+.tabrail .tab.newtab:hover { border-color: var(--ember); background: rgba(193, 127, 58, 0.08); }
+.tabrail .tab.library-tab { margin-left: 0; margin-top: 6px; border: 1px solid rgba(193, 127, 58, 0.45); }
 
 .statusline {
   width: 100%;

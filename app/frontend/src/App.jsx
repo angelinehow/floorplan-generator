@@ -81,6 +81,12 @@ export default function App() {
   const [panelW, setPanelW] = useState(380);
   const [collapsed, setCollapsed] = useState(false);
   const [resizing, setResizing] = useState(false);
+  const [tabOrient, setTabOrient] = useState("horizontal");  // "horizontal" | "vertical"
+  const [railW, setRailW] = useState(170);
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [railResizing, setRailResizing] = useState(false);
+  const railResize = useRef(null);   // { startX, startW } while dragging the rail edge
+  const [winW, setWinW] = useState(typeof window !== "undefined" ? window.innerWidth : 1400);
 
   const debounce = useRef(null);
   const renderSeq = useRef(0);   // latest-wins guard so a slow /render can't clobber a newer one
@@ -103,6 +109,9 @@ export default function App() {
       const ui = JSON.parse(localStorage.getItem(LS_UI) || "{}");
       if (ui.panelW) setPanelW(ui.panelW);
       if (ui.collapsed) setCollapsed(true);
+      if (ui.tabOrient) setTabOrient(ui.tabOrient);
+      if (ui.railW) setRailW(ui.railW);
+      if (ui.railCollapsed) setRailCollapsed(true);
     } catch (e) { /* ignore */ }
     listProperties().then((p) => {
       setProperties(p);
@@ -138,8 +147,16 @@ export default function App() {
 
   useEffect(() => { if (defaultProp) localStorage.setItem(LS_PROP, defaultProp); }, [defaultProp]);
   useEffect(() => {
-    localStorage.setItem(LS_UI, JSON.stringify({ panelW, collapsed }));
-  }, [panelW, collapsed]);
+    localStorage.setItem(LS_UI, JSON.stringify({ panelW, collapsed, tabOrient, railW, railCollapsed }));
+  }, [panelW, collapsed, tabOrient, railW, railCollapsed]);
+
+  // Track viewport width so vertical tabs can auto-fall back to horizontal when
+  // the sidebar + rail would leave the stage too narrow (see effectiveOrient).
+  useEffect(() => {
+    const onResize = () => setWinW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   // autosave open docs (slim — geometry stays server-side, re-rendered on load).
   // Debounced: the serialize-all-docs + stringify is deferred to a quiet moment
@@ -450,7 +467,75 @@ export default function App() {
   }
   function endResize() { setResizing(false); }
 
-  const tabLabel = (d) => d.meta.title || d.fileName.replace(/\.[^.]+$/, "") || "Untitled";
+  // ---- vertical tab rail resize -------------------------------------------
+  // The rail isn't anchored at x=0 (the sidebar sits to its left), so width is
+  // tracked as a delta from the drag's start rather than absolute clientX.
+  function startRailResize(e) {
+    e.preventDefault();
+    e.target.setPointerCapture?.(e.pointerId);
+    railResize.current = { startX: e.clientX, startW: railW };
+    setRailResizing(true);
+  }
+  function onRailResizeMove(e) {
+    if (!railResize.current) return;
+    const { startX, startW } = railResize.current;
+    setRailW(Math.min(360, Math.max(120, startW + (e.clientX - startX))));
+  }
+  function endRailResize() { railResize.current = null; setRailResizing(false); }
+
+  // Tabs use the same name the library shows for a saved sheet — the
+  // property-prefixed export name (exportName), not the raw upload filename — so
+  // a tab and its library card read identically. "Untitled" until a unit title.
+  const tabLabel = (d) => (d.meta.title ? exportName(d.propertyId, d.meta.title) : "Untitled");
+
+  // When two open tabs resolve to the same label (e.g. two units both titled
+  // "1 BED"), number every member of the colliding group — "name (1)", "name (2)"
+  // — so they're tellable apart. A unique label is left untouched.
+  function tabLabelUnique(d) {
+    const base = tabLabel(d);
+    const group = docs.filter((x) => tabLabel(x) === base);
+    if (group.length < 2) return base;
+    return `${base} (${group.findIndex((x) => x.id === d.id) + 1})`;
+  }
+
+  // Export names can still be long; middle-truncate to keep both the property
+  // prefix and the unit suffix visible rather than clipping one end.
+  function midTruncate(s, max = 36) {
+    if (s.length <= max) return s;
+    const keep = max - 1;                 // leave room for the ellipsis
+    const head = Math.ceil(keep * 0.55);
+    return s.slice(0, head) + "…" + s.slice(s.length - (keep - head));
+  }
+
+  // Vertical tabs need the sidebar + rail + a readable stage to all fit; when the
+  // window is too narrow we render horizontal regardless of the saved preference.
+  const railFootprint = railCollapsed ? 28 : railW;
+  const verticalFits = winW >= (collapsed ? 28 : panelW) + railFootprint + 520;
+  const effectiveOrient = tabOrient === "vertical" && verticalFits ? "vertical" : "horizontal";
+
+  // The tab list (open docs + new-tab + Library). Shared by the horizontal tab
+  // strip and the vertical tab rail — only the wrapping element's class differs,
+  // so the two layouts diverge via CSS, not markup.
+  function renderTabList() {
+    return (
+      <>
+        {docs.map((d) => (
+          <span key={d.id}
+            className={"tab" + (activeId === d.id ? " active" : "")}
+            title={tabLabelUnique(d)}
+            onClick={() => setActiveId(d.id)}>
+            <span className="tablabel">{midTruncate(tabLabelUnique(d))}</span>
+            <span className="tabx" title="Close" onClick={(e) => { e.stopPropagation(); closeTab(d.id); }}>×</span>
+          </span>
+        ))}
+        <button className="tab newtab" title="New floor plan" onClick={newTab}>+</button>
+        <span className={"tab library-tab" + (activeId === "library" ? " active" : "")}
+          onClick={() => setActiveId("library")}>
+          Library{sheets.length ? ` (${sheets.length})` : ""}
+        </span>
+      </>
+    );
+  }
 
   return (
     <div className="app">
@@ -593,24 +678,40 @@ export default function App() {
           onPointerUp={endResize} onPointerLeave={endResize} />
       )}
 
+      {effectiveOrient === "vertical" && (
+        railCollapsed ? (
+          <button className="expandbtn" title="Show tabs" onClick={() => setRailCollapsed(false)}>›</button>
+        ) : (
+          <>
+            <nav className="tabrail" style={{ width: railW, minWidth: railW }}>
+              <div className="tabrail-head">
+                <button className="collapsebtn" title="Hide tabs" onClick={() => setRailCollapsed(true)}>«</button>
+              </div>
+              {renderTabList()}
+            </nav>
+            <div className={"resizer" + (railResizing ? " active" : "")}
+              onPointerDown={startRailResize} onPointerMove={onRailResizeMove}
+              onPointerUp={endRailResize} onPointerLeave={endRailResize} />
+          </>
+        )
+      )}
+
       <main className="stage">
         <div className="stagehead">
           <div className="tabbar">
-            <div className="tabs">
-              {docs.map((d) => (
-                <span key={d.id}
-                  className={"tab" + (activeId === d.id ? " active" : "")}
-                  onClick={() => setActiveId(d.id)}>
-                  <span className="tablabel">{tabLabel(d)}</span>
-                  <span className="tabx" title="Close" onClick={(e) => { e.stopPropagation(); closeTab(d.id); }}>×</span>
-                </span>
-              ))}
-              <button className="tab newtab" title="New floor plan" onClick={newTab}>+</button>
-              <span className={"tab library-tab" + (activeId === "library" ? " active" : "")}
-                onClick={() => setActiveId("library")}>
-                Library{sheets.length ? ` (${sheets.length})` : ""}
-              </span>
-            </div>
+            {effectiveOrient === "horizontal" && (
+              <div className="tabs">{renderTabList()}</div>
+            )}
+            <div className="tabbar-right">
+              <button className="btn ghost icon orient-toggle"
+                disabled={!verticalFits && tabOrient === "horizontal"}
+                onClick={() => setTabOrient(effectiveOrient === "horizontal" ? "vertical" : "horizontal")}
+                title={!verticalFits && tabOrient === "horizontal"
+                  ? "Window too narrow for vertical tabs"
+                  : "Toggle Tab View — " + (effectiveOrient === "horizontal" ? "switch to vertical tabs" : "switch to horizontal tabs")}
+                aria-label="Toggle Tab View">
+                {effectiveOrient === "horizontal" ? "☰" : "▤"}
+              </button>
             {ready && (
               <div className="actions">
                 <div className="dropdown split">
@@ -659,6 +760,7 @@ export default function App() {
                 </div>
               </div>
             )}
+            </div>
           </div>
         </div>
 
