@@ -132,6 +132,7 @@ select, input[type="text"] {
   border: 1px solid var(--line);
 }
 .btn.ember { background: var(--ember); }
+.btn.ghost.active { background: #fbeae7; color: #b23a2e; border-color: #e3b6a8; }
 .btnrow { display: flex; gap: 8px; margin-top: 8px; }
 .btnrow .btn { width: auto; flex: 1; }
 

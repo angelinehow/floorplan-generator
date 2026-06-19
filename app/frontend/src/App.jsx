@@ -831,6 +831,11 @@ export default function App() {
                   title="Hide the move handles to see the final sheet">
                   {active.showHandles ? "Hide labels" : "Show labels"}
                 </button>
+                <button className={"btn ghost" + (active.meta.sold_out ? " active" : "")}
+                  onClick={() => patchActive((d) => ({ meta: { ...d.meta, sold_out: !d.meta.sold_out } }))}
+                  title="Overlay a centered SOLD OUT stamp on the sheet">
+                  {active.meta.sold_out ? "✓ Sold out" : "Sold out"}
+                </button>
                 <button className="btn ghost icon" disabled={rendering} onClick={() => doRender(false)}
                   title="Reload — re-render the preview (e.g. after editing the property's brand)">
                   {rendering ? "…" : "⟳"}

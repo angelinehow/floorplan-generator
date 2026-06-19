@@ -343,6 +343,33 @@ def render(prims, config):
             f'font-size="{wm_size:.0f}" fill="{ACCENT}" fill-opacity="0.07">{watermark}</text>')
     else:
         watermark_svg = ""
+    # Optional "SOLD OUT" status stamp: a bold centered diagonal mark laid *on
+    # top of* the finished plan and labels (unlike the ghost brand watermark
+    # above, which sits behind everything). Per-sheet flag carried in the unit
+    # metadata, so it persists on save, restores on re-open, and rides into the
+    # PNG export. The bare plan_only export never reaches here, so it stays clean.
+    sold_out_svg = ""
+    if md.get("sold_out"):
+        so_text = "SOLD OUT"
+        so_target_w = PAGE_W * 0.74          # how wide the mark should run
+        so_size, so_ls = 150.0, 8.0
+        tw = _text_w(so_text, so_size, so_ls)
+        if tw > so_target_w:                 # shrink to fit, keeping proportions
+            scale = so_target_w / tw
+            so_size, so_ls, tw = so_size * scale, so_ls * scale, so_target_w
+        pad_x, pad_y = so_size * 0.34, so_size * 0.30
+        box_w, box_h = tw + pad_x * 2, so_size + pad_y * 2
+        bx, by = wm_cx - box_w / 2, wm_cy - box_h / 2
+        SOLD = "#C0392B"
+        sold_out_svg = (
+            f'<g transform="rotate(-18 {wm_cx:.0f} {wm_cy:.0f})" opacity="0.62">'
+            f'<rect x="{bx:.0f}" y="{by:.0f}" width="{box_w:.0f}" height="{box_h:.0f}" '
+            f'rx="{so_size * 0.12:.0f}" fill="none" stroke="{SOLD}" '
+            f'stroke-width="{max(6.0, so_size * 0.06):.0f}"/>'
+            f'<text x="{wm_cx:.0f}" y="{wm_cy:.0f}" text-anchor="middle" '
+            f'dominant-baseline="central" font-family="{SANS}" font-weight="bold" '
+            f'font-size="{so_size:.0f}" letter-spacing="{so_ls:.1f}" fill="{SOLD}">'
+            f'{so_text}</text></g>')
     footer_addr = esc((md.get("footer_address") or "").upper())
     header_right = esc((md.get("header_right") or "FLOOR PLAN").upper())
     disclaimer = esc(md.get("disclaimer") or
@@ -410,6 +437,7 @@ def render(prims, config):
 {polyline_group(dash_lines, f'stroke="{WALL}" stroke-width="0.6" stroke-opacity="0.35" stroke-dasharray="4 3"')}
   </g>
 {chr(10).join(room_labels)}
+  {sold_out_svg}
   <rect y="{PAGE_H-FOOTER_H}" width="{PAGE_W}" height="{FOOTER_H}" fill="{DARK}"/>
   <text x="60" y="{PAGE_H-FOOTER_H+62}" font-family="{SERIF}" font-size="40" fill="#FFFFFF">{title}</text>
   <line x1="62" y1="{PAGE_H-FOOTER_H+80}" x2="122" y2="{PAGE_H-FOOTER_H+80}" stroke="{ACCENT}" stroke-width="2.5"/>
