@@ -58,7 +58,7 @@ metadata + key-plan form             /properties, /sheets/*   CRUD + library
 - `engine/keyplan_trace.py` — auto-trace a raw plate screenshot into a clean filled footprint silhouette (numpy + PIL): `trace_plate()` caches a palette-independent 3-level mask (0 outside / 255 interior / 128 traced interior wall ink clipped to the footprint); `colorize()` applies the brand palette at render time — `mid` fill, `dark` perimeter, black interior room divisions. "Seal strength" closes doorway gaps; falls back to dimmed-screenshot mode when a plate won't trace cleanly.
 - `engine/brand.py` — `extract_brand()` pulls a color palette (and PDF-embedded font names) from an uploaded brand file to auto-fill the property-setup form. `dark`/`light` are dependable; `accent`/`mid` are guesses, so all dominant swatches are returned for the user to re-pick.
 - `engine/convert.py` — DWG→DXF via ODA CLI; degrades gracefully when absent.
-- `data/properties/*.json` — one file per property (brand + layer map); `800-princess.json` is the worked example. `data/uploads/` — transient parse/plate cache. `data/sheets/<prop>/` — saved sheet library.
+- `data/properties/*.json` — one file per property (brand + layer map); `800-prin.json` is the worked example. `data/uploads/` — transient parse/plate cache. `data/sheets/<prop>/` — saved sheet library.
 
 ### Frontend layout (`app/frontend/src/`)
 - `App.jsx` — single stateful component orchestrating the whole flow; debounced auto-preview on any input change; localStorage autosave/restore of the in-progress unit and last-used property.

@@ -113,7 +113,7 @@ disclaimer), the four-role brand palette with a live header/footer swatch, and
 the CAD layer map (which DXF layer names mean wall / poché / door / glazing /
 room-label / drop). Defaults match the Revit export scheme. Each property is
 saved as one JSON file in `backend/data/properties/` — you can still hand-edit
-those if you prefer, modelled on `800-princess.json`.
+those if you prefer, modelled on `800-prin.json`.
 
 ## Notes / known limits (v1)
 
