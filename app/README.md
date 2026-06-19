@@ -117,9 +117,11 @@ those if you prefer, modelled on `800-prin.json`.
 
 ## Notes / known limits (v1)
 
-- Dimensions are left blank on parse for the user to fill — open-plan sizes are
-  judgment calls (spec §10) and wall-to-wall auto-measure is deliberately not
-  trusted yet.
+- Dimensions are **auto-estimated** on parse (wall-to-wall ray cast) and seeded
+  for the user to confirm — but flagged as estimates: an on-screen warning marks
+  them and each room has a dimension toggle. Open-plan sizes are still judgment
+  calls (spec §10), so treat the estimate as a starting point, not gospel —
+  edit or toggle it off per room before exporting.
 - Label search boxes are seeded as a fraction of the plan around each CAD text
   point, then refined by the clear-pocket + halo placement. Occasional misses
   are corrected by dragging the label on the preview.

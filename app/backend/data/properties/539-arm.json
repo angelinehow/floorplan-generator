@@ -1,0 +1,147 @@
+{
+  "id": "539-arm",
+  "name": "539 ARMSTRONG",
+  "location": "KINGSTON, ON",
+  "lockup": "539",
+  "watermark": "539",
+  "watermark_image": null,
+  "footer_address": "539 ARMSTRONG ST. KINGSTON, ON",
+  "header_right": "FLOOR PLAN",
+  "disclaimer": "FOR ILLUSTRATIVE PURPOSES ONLY. DIMENSIONS ARE APPROXIMATE AND SUBJECT TO CHANGE.",
+  "palette": {
+    "dark": "#0e446c",
+    "accent": "#CABFC3",
+    "mid": "#d3b038",
+    "light": "#ffffff"
+  },
+  "fonts": {
+    "serif": "Gordita",
+    "sans": "'Helvetica Neue', Helvetica, Arial, sans-serif"
+  },
+  "brand_swatches": [
+    {
+      "hex": "#A09A9C",
+      "frac": 0.1152,
+      "luminance": 0.6095,
+      "chroma": 0.0235
+    },
+    {
+      "hex": "#ADA3A7",
+      "frac": 0.0918,
+      "luminance": 0.6487,
+      "chroma": 0.0392
+    },
+    {
+      "hex": "#9B9798",
+      "frac": 0.0818,
+      "luminance": 0.5958,
+      "chroma": 0.0157
+    },
+    {
+      "hex": "#231E2C",
+      "frac": 0.074,
+      "luminance": 0.1258,
+      "chroma": 0.0549
+    },
+    {
+      "hex": "#A7A1A3",
+      "frac": 0.0731,
+      "luminance": 0.6369,
+      "chroma": 0.0235
+    },
+    {
+      "hex": "#C2B8BC",
+      "frac": 0.0695,
+      "luminance": 0.731,
+      "chroma": 0.0392
+    },
+    {
+      "hex": "#BDB1B6",
+      "frac": 0.0679,
+      "luminance": 0.7055,
+      "chroma": 0.0471
+    },
+    {
+      "hex": "#CABFC3",
+      "frac": 0.0655,
+      "luminance": 0.7593,
+      "chroma": 0.0431
+    },
+    {
+      "hex": "#1B1623",
+      "frac": 0.0624,
+      "luminance": 0.0941,
+      "chroma": 0.051
+    },
+    {
+      "hex": "#A49EA0",
+      "frac": 0.0563,
+      "luminance": 0.6252,
+      "chroma": 0.0235
+    },
+    {
+      "hex": "#110D14",
+      "frac": 0.0556,
+      "luminance": 0.0563,
+      "chroma": 0.0275
+    },
+    {
+      "hex": "#8E888B",
+      "frac": 0.0524,
+      "luminance": 0.5392,
+      "chroma": 0.0235
+    },
+    {
+      "hex": "#A29C9E",
+      "frac": 0.0491,
+      "luminance": 0.6173,
+      "chroma": 0.0235
+    },
+    {
+      "hex": "#B3ABAE",
+      "frac": 0.0472,
+      "luminance": 0.6781,
+      "chroma": 0.0314
+    },
+    {
+      "hex": "#524F55",
+      "frac": 0.0354,
+      "luminance": 0.314,
+      "chroma": 0.0235
+    }
+  ],
+  "brand_fonts": null,
+  "font_faces": null,
+  "layer_map": {
+    "wall_line": [
+      "A-WALL",
+      "I-WALL"
+    ],
+    "wall_fill": [
+      "A-WALL-PATT"
+    ],
+    "door": [
+      "A-DOOR",
+      "A-DOOR-FRAM"
+    ],
+    "glazing": [
+      "A-GLAZ"
+    ],
+    "dashed": [
+      "A-DETL-HDLN",
+      "A-FLOR-OVHD"
+    ],
+    "room_label": [
+      "G-ANNO-TEXT"
+    ],
+    "drop": [
+      "A-AREA-IDEN",
+      "S-COLS-SYMB",
+      "S-STRS",
+      "S-STRS-MBND"
+    ],
+    "floor_hatch": [
+      "A-FLOR"
+    ]
+  }
+}

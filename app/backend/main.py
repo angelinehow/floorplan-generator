@@ -22,6 +22,7 @@ import base64
 import glob
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -34,8 +35,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
-from engine import (parse_dxf, ParseError, DEFAULT_LAYER_MAP, render,
-                    render_keyplan_sheet, trace_plate, colorize_trace,
+import ezdxf
+
+from engine import (parse_dxf, ParseError, DEFAULT_LAYER_MAP, infer_layer_map,
+                    render, render_keyplan_sheet, trace_plate, colorize_trace,
                     dwg_to_dxf, converter_available,
                     ConversionError, extract_brand, BrandError)
 
@@ -50,8 +53,17 @@ for d in (PROP_DIR, UP_DIR, SHEET_DIR):
 MAX_UPLOAD_MB = 60
 UPLOAD_TTL_HOURS = 24   # working files in uploads/ older than this get swept
 
+logger = logging.getLogger(__name__)
+
+# Allowed CORS origins default to the local Vite dev server (which fronts this
+# API via its /api proxy). Override in deployment with the ALLOWED_ORIGINS env
+# var — a comma-separated list of origins (same pattern as UPLOAD_TTL_HOURS).
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()]
+
 app = FastAPI(title="Floor Plan Sheet Generator")
-app.add_middleware(CORSMiddleware, allow_origins=["*"],
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS,
                    allow_methods=["*"], allow_headers=["*"])
 
 
@@ -157,12 +169,18 @@ def _css_family(fam):
     return (fam or "").replace("\\", "").replace("'", "")
 
 
-def _apply_custom_fonts(svg, png, font_faces):
+def _apply_custom_fonts(svg, png, font_faces, png_width=900):
     """Make uploaded brand fonts render everywhere. cairosvg ignores embedded
     fonts, so when a property carries font faces we (1) inline an @font-face so
     the SVG renders the font in any browser, and (2) re-render the PNG with
     resvg, which honours fonts loaded from files. Falls back to the cairosvg PNG
-    if resvg is unavailable — the SVG still carries the font either way."""
+    if resvg is unavailable — the SVG still carries the font either way.
+
+    png_width is the raster pixel width the cairosvg path used (engine.render's
+    output_width), threaded in by the caller so the resvg re-render comes out at
+    the same resolution — otherwise a branded PNG would differ in size from an
+    unbranded one (notably the plan_only export, which renders wider than the
+    default 900px sheet)."""
     faces = [f for f in (font_faces or []) if f.get("data") and f.get("family")]
     if not faces:
         return svg, png
@@ -181,7 +199,7 @@ def _apply_custom_fonts(svg, png, font_faces):
             os.write(fd, base64.b64decode(b64))
             os.close(fd)
             tmp.append(path)
-        png2 = bytes(resvg_py.svg_to_bytes(svg_string=svg2, width=900, font_files=tmp))
+        png2 = bytes(resvg_py.svg_to_bytes(svg_string=svg2, width=png_width, font_files=tmp))
         return svg2, png2
     except Exception:
         return svg2, png
@@ -269,10 +287,19 @@ def health():
 # parse
 # --------------------------------------------------------------------------- #
 @app.post("/parse")
-async def parse(file: UploadFile = File(...), property_id: Optional[str] = Form(None)):
+async def parse(file: UploadFile = File(...), property_id: Optional[str] = Form(None),
+                layer_map: Optional[str] = Form(None)):
     sweep_uploads()
     if property_id:
         _safe_id(property_id, "property id")
+    override_map = None
+    if isinstance(layer_map, str) and layer_map.strip():
+        try:
+            override_map = json.loads(layer_map)
+            if not isinstance(override_map, dict):
+                raise ValueError("layer_map must be a JSON object")
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=f"Bad layer_map: {exc}")
     name = (file.filename or "").lower()
     raw = await file.read()
     if len(raw) > MAX_UPLOAD_MB * 1024 * 1024:
@@ -298,17 +325,38 @@ async def parse(file: UploadFile = File(...), property_id: Optional[str] = Form(
             "Unsupported file type. Upload a DXF (or DWG if the server has the "
             "ODA File Converter)."))
     prop = load_property(property_id) if property_id else None
-    layer_map = (prop or {}).get("layer_map") or DEFAULT_LAYER_MAP
+    # Precedence: an explicit override (the user corrected the map) wins; then a
+    # saved property's map; then the Revit-scheme default. The default/property
+    # path stays byte-identical to before — inference only steps in on failure.
+    used_map = override_map or (prop or {}).get("layer_map") or DEFAULT_LAYER_MAP
+    layer_report = None
+    layer_inferred = False
     try:
-        result = parse_dxf(dxf_path, layer_map=layer_map)
+        result = parse_dxf(dxf_path, layer_map=used_map)
     except ParseError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        # No wall geometry under the chosen map. If the user explicitly chose it,
+        # respect that and surface the error. Otherwise the file likely uses a
+        # non-Revit layer scheme — auto-detect the roles and try once more.
+        if override_map is not None:
+            raise HTTPException(status_code=422, detail=str(exc))
+        try:
+            doc = ezdxf.readfile(dxf_path)
+            inferred, layer_report = infer_layer_map(doc)
+            result = parse_dxf(dxf_path, layer_map=inferred)
+            used_map, layer_inferred = inferred, True
+        except ParseError:
+            raise HTTPException(status_code=422, detail=str(exc))   # original guidance
+        except Exception:
+            logger.exception("Layer auto-detection failed for doc_id=%s", doc_id)
+            raise HTTPException(status_code=422, detail=str(exc))
     with open(os.path.join(UP_DIR, f"{doc_id}.prims.json"), "w", encoding="utf-8") as f:
         json.dump({"prims": result["prims"], "extents": result["extents"]}, f)
     return {"doc_id": doc_id, "labels": result["labels"],
             "ignored_text": result["ignored_text"], "suggestions": result["suggestions"],
             "warnings": result.get("warnings", []), "extents": result["extents"],
-            "prim_count": len(result["prims"])}
+            "prim_count": len(result["prims"]),
+            "layer_map_used": used_map, "layer_report": layer_report,
+            "layer_inferred": layer_inferred}
 
 
 # --------------------------------------------------------------------------- #
@@ -431,17 +479,33 @@ def do_render(req: RenderRequest):
         config["keyplan"] = kp
     try:
         svg, png, meta = render(prims, config)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Render failed: {exc}")
+    except (ParseError, ValueError, KeyError) as exc:
+        # Bad input / config (unknown palette key, malformed geometry, …) —
+        # meaningful to the user, so surface it as a 422 with the real message.
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        # Genuinely unexpected server fault: log the full traceback for ops and
+        # return a generic message rather than leaking internals to the client.
+        logger.exception("Unexpected error rendering doc_id=%s", req.doc_id)
+        raise HTTPException(status_code=500, detail="Render failed — see server logs")
     # Embed any uploaded brand fonts so they render in both the SVG and the PNG.
-    svg, png = _apply_custom_fonts(svg, png, config.get("font_faces"))
+    # Match the resvg re-render width to whatever the cairosvg path used: the
+    # default sheet is 900px, but the plan_only export renders wider (see
+    # engine.render), so derive it from meta to keep branded/unbranded PNGs equal.
+    png_width = (min(2400, max(1000, round(meta["page"]["w"] * 2)))
+                 if meta.get("plan_only") else 900)
+    svg, png = _apply_custom_fonts(svg, png, config.get("font_faces"), png_width=png_width)
 
     keyplan_svg = None
     if req.keyplan and not req.plan_only and req.keyplan.get("placement") == "standalone":
         try:
             keyplan_svg = render_keyplan_sheet(config)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Key plan failed: {exc}")
+        except (ParseError, ValueError, KeyError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except Exception:
+            logger.exception("Unexpected error rendering standalone key plan "
+                             "for doc_id=%s", req.doc_id)
+            raise HTTPException(status_code=500, detail="Key plan failed — see server logs")
 
     sheet_id = None
     if req.save and req.property_id and not req.plan_only:
@@ -472,6 +536,19 @@ def do_render(req: RenderRequest):
         prims_src = os.path.join(UP_DIR, f"{req.doc_id}.prims.json")
         if os.path.isfile(prims_src):
             shutil.copy(prims_src, os.path.join(out, f"{sheet_id}.prims.json"))
+        # Preserve the key-plan plate image alongside the sheet. The config keeps
+        # only the plate_id, and the plate lives in the sweepable uploads dir — so
+        # copy it in (mirroring the prims-on-save above) to survive the 24h sweep.
+        # The ext is derived from the stored upload filename, not assumed.
+        plate_id = (req.keyplan or {}).get("plate_id")
+        if plate_id and not req.plan_only:
+            for fn in glob.glob(os.path.join(UP_DIR, f"{plate_id}_plate*")):
+                ext = os.path.splitext(fn)[1]
+                try:
+                    shutil.copy(fn, os.path.join(out, f"{sheet_id}-plate{ext}"))
+                except OSError:
+                    pass   # plate already swept — degrade gracefully, don't fail the save
+                break
         entry = {"sheet_id": sheet_id, "title": req.metadata.get("title", ""),
                  "suite": req.metadata.get("suite", ""),
                  "sf": req.metadata.get("sf", ""),
@@ -546,6 +623,10 @@ def delete_property(prop_id):
     path = os.path.join(PROP_DIR, f"{prop_id}.json")
     if os.path.isfile(path):
         os.remove(path)
+    # Also drop the property's saved-sheet library; otherwise the orphaned
+    # directory keeps surfacing in GET /sheets. rmtree is guarded so a missing
+    # dir doesn't crash the delete.
+    shutil.rmtree(os.path.join(SHEET_DIR, prop_id), ignore_errors=True)
     return {"deleted": prop_id}
 
 
@@ -646,6 +727,19 @@ def reopen_sheet(prop_id, sheet_id):
     new_doc = uuid.uuid4().hex[:12]
     shutil.copy(prims_path, os.path.join(UP_DIR, f"{new_doc}.prims.json"))
     cfg["doc_id"] = new_doc
+    # Restore the preserved key-plan plate back into uploads under the SAME
+    # plate_id the config references, so GET /plate/{plate_id} resolves again and
+    # the box-placement picker can repaint. Mirrors the prims copy-back above.
+    plate_id = (cfg.get("keyplan") or {}).get("plate_id")
+    if plate_id:
+        _safe_id(plate_id, "plate id")
+        for fn in glob.glob(os.path.join(d, f"{sheet_id}-plate*")):
+            ext = os.path.splitext(fn)[1]
+            try:
+                shutil.copy(fn, os.path.join(UP_DIR, f"{plate_id}_plate{ext}"))
+            except OSError:
+                pass   # preserved plate missing — picker just won't repaint
+            break
     return cfg
 
 
@@ -655,7 +749,8 @@ def delete_sheet(prop_id, sheet_id):
     _safe_id(sheet_id, "sheet id")
     d = os.path.join(SHEET_DIR, prop_id)
     for fn in glob.glob(os.path.join(d, f"{sheet_id}.*")) + \
-            glob.glob(os.path.join(d, f"{sheet_id}-keyplan.*")):
+            glob.glob(os.path.join(d, f"{sheet_id}-keyplan.*")) + \
+            glob.glob(os.path.join(d, f"{sheet_id}-plate*")):
         try:
             os.remove(fn)
         except OSError:

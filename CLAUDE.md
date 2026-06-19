@@ -88,7 +88,7 @@ Both endpoints interpret layers through the property's **layer map** (`DEFAULT_L
 - Label **search rectangles are kept tight** to the room (`seed_box_frac` in `parse.py`) so labels don't drift into neighbours.
 - **No `.rvt` or in-process `.dwg` parsing** — `.rvt` is rejected with guidance; `.dwg` only via the ODA CLI.
 - **Loose furniture is dropped** by block-name match (`FURNITURE_FRAGMENTS` in `parse.py`); built-in kitchen/bath fixtures stay.
-- Room **dimensions are left blank on parse** for the user to fill — open-plan sizes are judgment calls; auto wall-to-wall measure is deliberately not trusted.
+- Room **dimensions are auto-estimated on parse** (wall-to-wall ray cast in `_estimate_dims`) and seeded with `dims_estimated: True`, which drives an on-screen "estimated" warning plus a per-room dimension toggle — open-plan sizes are judgment calls, so the estimate is a confirm-or-edit starting point, never trusted blindly. (`_wall_segments` must close poché polygons correctly — `zip(poly, poly[1:] + poly[:1])` — or fill-only walls contribute no edges and the estimate silently no-ops.)
 - **Large-file guards** (`parse.py`): uploads > `MAX_UPLOAD_MB` (60) rejected, geometry capped at `MAX_PRIMS` (200k) with a UI warning, single oversized polyline/spline downsampled. The right input is a single-unit view, not a whole floor.
 
 ## Out of scope for v1 (don't add unprompted)

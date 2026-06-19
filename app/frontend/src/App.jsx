@@ -42,6 +42,31 @@ function guessTitle(labels) {
 let _seq = 0;
 const uid = () => `d${Date.now().toString(36)}${(_seq++).toString(36)}`;
 
+// CAD layer roles the renderer understands (mirrors PropertySetup's LAYER_ROLES);
+// "" = unmapped/ignored. Used by the detected-layers review table.
+const LAYER_ROLE_OPTS = [
+  ["", "(ignore)"],
+  ["wall_line", "Wall outline"],
+  ["wall_fill", "Wall fill"],
+  ["door", "Doors"],
+  ["glazing", "Glazing"],
+  ["dashed", "Overhead / dashed"],
+  ["room_label", "Room-label text"],
+  ["drop", "Drop (tags/cols/stairs)"],
+  ["floor_hatch", "Floor hatch"],
+];
+
+// {layer: role} (from a layer_report) -> a layer_map {role: [layer,…]} the
+// backend accepts as a manual override. Unassigned ("") layers are omitted.
+function rolesToLayerMap(roles) {
+  const m = {};
+  for (const [layer, role] of Object.entries(roles || {})) {
+    if (!role) continue;
+    (m[role] = m[role] || []).push(layer);
+  }
+  return m;
+}
+
 // Map a /parse response onto the doc fields it populates. Shared by the single
 // upload (handleFile) and batch (runBatch) paths so they can't drift.
 function parsedDocFields(d, fileName) {
@@ -53,6 +78,15 @@ function parsedDocFields(d, fileName) {
     ignored: d.ignored_text || [],
     suggestions: d.suggestions || {},
     warnings: d.warnings || [],
+    // layer auto-detection: set when the file's layers didn't match the active
+    // map and roles were inferred (so the UI can offer review + save-as-property)
+    layerInferred: !!d.layer_inferred,
+    layerReport: d.layer_report || null,
+    layerMapUsed: d.layer_map_used || null,
+    // editable {layer: role} seeded from the report, for the review table
+    layerRoles: d.layer_report
+      ? Object.fromEntries(d.layer_report.map((r) => [r.layer, r.role || ""]))
+      : null,
     parseError: "",
     svg: "",
     savedId: null,
@@ -77,6 +111,11 @@ function newDoc(propertyId) {
     meta: { title: "", suite: "", sf: "" },
     suggestions: {},
     warnings: [],
+    layerInferred: false,
+    layerReport: null,
+    layerMapUsed: null,
+    layerRoles: null,
+    fileObj: null,         // the uploaded File, kept in-memory to re-parse on a layer-map correction
     parseError: "",
     renderError: "",
     keyplan: null,
@@ -105,6 +144,8 @@ export default function App() {
   const [saveMenuOpen, setSaveMenuOpen] = useState(false);
 
   const [editing, setEditing] = useState(null);
+  const [seedLayer, setSeedLayer] = useState(null);  // detected layer_map to pre-fill a NEW property
+  const [showLayerReview, setShowLayerReview] = useState(false);  // detected-layers review table expanded
   const [openSection, setOpenSection] = useState("upload");
 
   const [panelW, setPanelW] = useState(380);
@@ -118,7 +159,7 @@ export default function App() {
   const [winW, setWinW] = useState(typeof window !== "undefined" ? window.innerWidth : 1400);
 
   const debounce = useRef(null);
-  const renderSeq = useRef(0);   // latest-wins guard so a slow /render can't clobber a newer one
+  const renderSeq = useRef({});  // per-doc latest-wins guard (keyed by doc id) so a slow /render can't clobber a newer one for the SAME doc
 
   const active = docs.find((d) => d.id === activeId) || null;
   const propertyId = active ? active.propertyId : defaultProp;
@@ -199,6 +240,10 @@ export default function App() {
         savedId: d.savedId, rooms: d.rooms, deletedRooms: d.deletedRooms, ignored: d.ignored,
         meta: d.meta, suggestions: d.suggestions, warnings: d.warnings,
         keyplan: d.keyplan, showHandles: d.showHandles,
+        // layer review (small): survives reload so the banner/table persist; the
+        // File can't be persisted, so Apply&re-parse disables until a re-upload.
+        layerInferred: d.layerInferred, layerReport: d.layerReport,
+        layerRoles: d.layerRoles, layerMapUsed: d.layerMapUsed,
       }));
       localStorage.setItem(LS_SESSION, JSON.stringify({ docs: slim, activeId }));
     }, 600);
@@ -257,6 +302,7 @@ export default function App() {
     setOpenSection("upload");
   }
   function closeTab(id) {
+    delete renderSeq.current[id];   // drop the closed doc's per-doc render counter
     setDocs((ds) => {
       const idx = ds.findIndex((d) => d.id === id);
       const next = ds.filter((d) => d.id !== id);
@@ -297,10 +343,45 @@ export default function App() {
     patchDoc(id, { fileName: file.name, parseError: "", svg: "", savedId: null });
     try {
       const d = await parseFile(file, prop || undefined);
-      patchDoc(id, parsedDocFields(d, file.name));
+      patchDoc(id, { ...parsedDocFields(d, file.name), fileObj: file });
       setOpenSection("details");
     } catch (e) {
       patchDoc(id, { docId: null, rooms: [], parseError: e.message });
+      toast(e.message, "error");
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  function setLayerRole(layer, role) {
+    if (!active) return;
+    patchDoc(active.id, { layerRoles: { ...active.layerRoles, [layer]: role } });
+  }
+
+  // Re-parse the CURRENT file with the manually-corrected layer roles (the inline
+  // review table). Needs the uploaded File in memory, so it's unavailable after a
+  // page reload (the File can't be persisted) — the button disables in that case.
+  async function applyLayerRoles() {
+    if (!active || !active.fileObj) return;
+    const corrected = rolesToLayerMap(active.layerRoles);
+    setParsing(true);
+    try {
+      const d = await parseFile(active.fileObj, active.propertyId || undefined, corrected);
+      // Refresh geometry/labels and the applied map; keep the user's edited
+      // metadata and the review table. Clear the stale preview so it repaints.
+      patchDoc(active.id, {
+        docId: d.doc_id,
+        rooms: d.labels.map((l) => ({ ...l })),
+        deletedRooms: [],
+        ignored: d.ignored_text || [],
+        suggestions: d.suggestions || {},
+        warnings: d.warnings || [],
+        layerMapUsed: corrected,
+        svg: "", savedId: null, parseError: "",
+      });
+      toast("Re-parsed with your layer roles.", "success");
+    } catch (e) {
+      patchDoc(active.id, { parseError: e.message });
       toast(e.message, "error");
     } finally {
       setParsing(false);
@@ -328,7 +409,7 @@ export default function App() {
         setStatus(item.qid, { status: "parsing" });
         try {
           const d = await parseFile(item.file, prop || undefined);
-          const doc = { ...newDoc(prop), ...parsedDocFields(d, item.fileName) };
+          const doc = { ...newDoc(prop), ...parsedDocFields(d, item.fileName), fileObj: item.file };
           setDocs((ds) => [...ds, doc]);
           setStatus(item.qid, { status: "ready", docId: doc.id });
           accepted++;
@@ -360,10 +441,23 @@ export default function App() {
     });
   }
 
+  // Shared expired-upload recovery for every /render caller (preview + the two
+  // download paths). The uploads cache sweep makes a doc_id go stale after the
+  // TTL; the backend then returns 404 "Upload expired"/"not found". When that's
+  // the failure, clear docId so the editor stops believing the doc is live and
+  // tells the user to re-upload — instead of surfacing a cryptic raw message.
+  // Returns true if it handled the error (caller should not surface it further).
+  function handleExpiredUpload(d, e) {
+    if (!/expired|not found/i.test(e.message)) return false;
+    toast("This unit's upload expired — re-upload the DXF.", "error");
+    patchDoc(d.id, { docId: null });
+    return true;
+  }
+
   async function doRender(save, asNew = false) {
     const d = docs.find((x) => x.id === activeId);
     if (!d || !d.docId) return;
-    const mySeq = ++renderSeq.current;   // claim the latest slot for preview output
+    const mySeq = (renderSeq.current[d.id] = (renderSeq.current[d.id] || 0) + 1);   // claim the latest slot for THIS doc's preview output
     if (save) setSaving(true); else setRendering(true);
     try {
       const res = await renderSheet({
@@ -371,7 +465,7 @@ export default function App() {
         metadata: d.meta, rooms: d.rooms, keyplan: d.keyplan || null,
         sheet_id: asNew ? null : (d.savedId || null), save,
       });
-      const latest = mySeq === renderSeq.current;
+      const latest = mySeq === renderSeq.current[d.id];
       patchDoc(d.id, {
         // only the newest render may repaint the preview — an earlier response
         // resolving after a newer one must not overwrite fresher geometry
@@ -389,11 +483,8 @@ export default function App() {
         refreshSheets();
       }
     } catch (e) {
-      if (/expired|not found/i.test(e.message)) {
-        toast("This unit's upload expired — re-upload the DXF.", "error");
-        patchDoc(d.id, { docId: null });
-      } else if (save || mySeq === renderSeq.current) {
-        // surface save failures always; suppress errors from a stale preview
+      // surface save failures always; suppress errors from a stale preview
+      if (!handleExpiredUpload(d, e) && (save || mySeq === renderSeq.current[d.id])) {
         patchDoc(d.id, { renderError: e.message });
       }
     } finally {
@@ -480,7 +571,7 @@ export default function App() {
       a.download = `${exportName(d.propertyId, d.meta.title)}.png`;
       a.click();
     } catch (e) {
-      toast(e.message, "error");
+      if (!handleExpiredUpload(d, e)) toast(e.message, "error");
     } finally {
       setPngBusy(false);
     }
@@ -507,7 +598,7 @@ export default function App() {
       a.click();
       if (kind !== "png") URL.revokeObjectURL(a.href);
     } catch (e) {
-      toast(e.message, "error");
+      if (!handleExpiredUpload(d, e)) toast(e.message, "error");
     } finally {
       setPngBusy(false);
     }
@@ -663,6 +754,54 @@ export default function App() {
 
           {active && active.parseError && <div className="error">{active.parseError}</div>}
           {(active ? active.warnings : []).map((w, i) => <div className="warn" key={i}>{w}</div>)}
+          {active && active.layerReport && (
+            <div className="warn">
+              <b>Auto-detected layers.</b> This drawing doesn't use the standard
+              Revit layer names, so roles were guessed from the layer names and
+              text. Walls → <code>{(active.layerMapUsed?.wall_line || []).join(", ") || "—"}</code>;
+              labels → <code>{(active.layerMapUsed?.room_label || []).join(", ") || "—"}</code>.
+              <div className="btnrow" style={{ marginTop: 6 }}>
+                <button className="linkish" onClick={() => setShowLayerReview((v) => !v)}>
+                  {showLayerReview ? "Hide" : `Review ${active.layerReport.length} layers`}
+                </button>
+                <button className="linkish"
+                  onClick={() => { setSeedLayer(rolesToLayerMap(active.layerRoles)); setEditing("new"); }}>
+                  Save as a property
+                </button>
+              </div>
+              {showLayerReview && (
+                <div style={{ marginTop: 8, maxHeight: 260, overflowY: "auto", fontSize: 12 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <tbody>
+                      {active.layerReport.map((r) => (
+                        <tr key={r.layer}>
+                          <td title={(r.samples || []).join(" · ")}
+                            style={{ padding: "2px 4px", wordBreak: "break-all" }}>{r.layer}</td>
+                          <td className="subtle" style={{ padding: "2px 4px", whiteSpace: "nowrap" }}>
+                            {r.line_count}L{r.text_count ? ` · ${r.text_count}T` : ""}
+                          </td>
+                          <td style={{ padding: "2px 4px" }}>
+                            <select value={active.layerRoles?.[r.layer] ?? ""}
+                              onChange={(e) => setLayerRole(r.layer, e.target.value)}>
+                              {LAYER_ROLE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                            </select>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="btnrow" style={{ marginTop: 6 }}>
+                    <button className="btn ghost" disabled={parsing || !active.fileObj}
+                      onClick={applyLayerRoles}>
+                      {parsing ? "Re-parsing…" : "Apply & re-parse"}
+                    </button>
+                    {!active.fileObj &&
+                      <span className="subtle">Re-upload to change the mapping.</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="step">
             <h3><span className="num">1</span> Property</h3>
@@ -979,15 +1118,18 @@ export default function App() {
       {editing && (
         <PropertySetup
           initial={editing === "new" ? null : editing}
-          onClose={() => setEditing(null)}
+          seedLayerMap={editing === "new" ? seedLayer : null}
+          onClose={() => { setEditing(null); setSeedLayer(null); }}
           onSaved={(saved) => {
             setEditing(null);
+            setSeedLayer(null);
             refreshProperties(saved.id);
             toast(`Property "${saved.name || saved.id}" saved`, "success");
             if (active && active.docId) doRender(false);   // refresh preview with new brand
           }}
           onDeleted={(p) => {
             setEditing(null);
+            setSeedLayer(null);
             refreshProperties();
             toast(`Property "${p.name || p.id}" deleted`, "success");
           }}
