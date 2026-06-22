@@ -75,6 +75,16 @@ def _morph(mask, k, grow):
     return s >= (Y1 - Y0) * (X1 - X0)       # all True in window == erode
 
 
+def _close(mask, k):
+    """Morphological close (dilate then erode): bridges gaps up to kernel k."""
+    return _morph(_morph(mask, k, True), k, False)
+
+
+def _open(mask, k):
+    """Morphological open (erode then dilate): shaves spurs/hairs up to kernel k."""
+    return _morph(_morph(mask, k, False), k, True)
+
+
 def _smooth(mask, blur):
     """Round off stair-steps: gaussian-blur the binary mask, re-threshold at 0.5.
     Turns a jagged raster contour into a smooth one without an external lib."""
@@ -189,10 +199,10 @@ def trace_plate(plate_bytes, seal=35):
     gray, sat = _to_gray_sat(rgb)
     walls = (gray < DARK_THRESH) & (sat < SAT_THRESH)
     sealk = max(3, round(seal * f))
-    closed = _morph(_morph(walls, sealk, True), sealk, False)
+    closed = _close(walls, sealk)
     solid = _fill_holes(closed)
     foot = _largest_component(solid)
-    foot = _morph(_morph(foot, k(5), False), k(5), True)   # despeckle the edge
+    foot = _open(foot, k(5))                               # despeckle the edge
     foot = _smooth(foot, SMOOTH_FOOT * f)                  # round the contour
     cov = float(foot.mean())
     # interior wall ink: the dark lines from the photo that fall within the
@@ -202,8 +212,8 @@ def trace_plate(plate_bytes, seal=35):
     # clean up the raw ink: open to shave hairs/spurs, drop speckle components,
     # and smooth the contour so edges don't read as jagged stair-steps on zoom.
     inner = walls & foot
-    inner = _morph(_morph(inner, k(WALL_SOLID), True), k(WALL_SOLID), False)
-    inner = _morph(_morph(inner, k(WALL_SMOOTH), False), k(WALL_SMOOTH), True)
+    inner = _close(inner, k(WALL_SOLID))
+    inner = _open(inner, k(WALL_SMOOTH))
     inner = _drop_small(inner & foot, round(WALL_SPECKLE * f * f))
     inner = _smooth(inner, SMOOTH_WALL * f) & foot
     level = (foot.astype(np.uint8)) * 255
@@ -230,9 +240,9 @@ def solidify_walls(mask, close_k, open_k=3, speckle=30, smooth=0.9):
     disconnected interior partitions. `close_k` must be wider than the wall
     cavity gap but far narrower than a room (the caller sizes it from plan span).
     """
-    band = _morph(_morph(mask, close_k, True), close_k, False)   # close: bridge faces
+    band = _close(mask, close_k)                  # bridge a wall's two faces
     if open_k and open_k >= 3:
-        band = _morph(_morph(band, open_k, False), open_k, True)  # open: shave spurs
+        band = _open(band, open_k)                # shave spurs
     if speckle:
         band = _drop_small(band, speckle)
     if smooth and smooth > 0:
@@ -260,7 +270,7 @@ def colorize(mask_png_bytes, palette):
     rgba[edge] = (*_hex(palette.get("dark", "#2B1F14")), 255)
     img = Image.fromarray(rgba, "RGBA")
     if w > DISPLAY_W:                       # LANCZOS downscale anti-aliases the edges
-        img = img.resize((DISPLAY_W, max(1, round(h * DISPLAY_W / w))), Image.LANCZOS)
+        img = img.resize((DISPLAY_W, max(1, round(h * DISPLAY_W / w))), Image.Resampling.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return buf.getvalue()

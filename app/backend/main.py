@@ -36,7 +36,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
-import ezdxf
+from ezdxf.filemanagement import readfile
 
 from engine import (parse_dxf, ParseError, DEFAULT_LAYER_MAP, infer_layer_map,
                     render, SHEET_PNG_W, render_keyplan_sheet, trace_plate, colorize_trace,
@@ -170,6 +170,14 @@ def _css_family(fam):
     return (fam or "").replace("\\", "").replace("'", "")
 
 
+def _png_width(meta):
+    """Match the resvg re-render width to whatever the cairosvg path used: the
+    default sheet is SHEET_PNG_W, but the plan_only export renders wider (see
+    engine.render), so derive it from meta to keep branded/unbranded PNGs equal."""
+    return (min(2400, max(1000, round(meta["page"]["w"] * 2)))
+            if meta.get("plan_only") else SHEET_PNG_W)
+
+
 def _apply_custom_fonts(svg, png, font_faces, png_width=SHEET_PNG_W):
     """Make uploaded brand fonts render everywhere. cairosvg ignores embedded
     fonts, so when a property carries font faces we (1) inline an @font-face so
@@ -247,7 +255,7 @@ def _trace_mask(plate_id, seal):
     cache = os.path.join(UP_DIR, f"{plate_id}_tracew{seal}.png")
     covfile = cache + ".cov"
     if os.path.isfile(cache):
-        cov = None   # persisted alongside the mask so a cache hit still reports it
+        # coverage is persisted alongside the mask so a cache hit still reports it
         try:
             with open(covfile) as f:
                 cov = float(f.read().strip())
@@ -341,7 +349,7 @@ async def parse(file: UploadFile = File(...), property_id: Optional[str] = Form(
         if override_map is not None:
             raise HTTPException(status_code=422, detail=str(exc))
         try:
-            doc = ezdxf.readfile(dxf_path)
+            doc = readfile(dxf_path)
             inferred, layer_report = infer_layer_map(doc)
             result = parse_dxf(dxf_path, layer_map=inferred)
             used_map, layer_inferred = inferred, True
@@ -490,12 +498,7 @@ def do_render(req: RenderRequest):
         logger.exception("Unexpected error rendering doc_id=%s", req.doc_id)
         raise HTTPException(status_code=500, detail="Render failed — see server logs")
     # Embed any uploaded brand fonts so they render in both the SVG and the PNG.
-    # Match the resvg re-render width to whatever the cairosvg path used: the
-    # default sheet is SHEET_PNG_W, but the plan_only export renders wider (see
-    # engine.render), so derive it from meta to keep branded/unbranded PNGs equal.
-    png_width = (min(2400, max(1000, round(meta["page"]["w"] * 2)))
-                 if meta.get("plan_only") else SHEET_PNG_W)
-    svg, png = _apply_custom_fonts(svg, png, config.get("font_faces"), png_width=png_width)
+    svg, png = _apply_custom_fonts(svg, png, config.get("font_faces"), png_width=_png_width(meta))
 
     keyplan_svg = None
     if req.keyplan and not req.plan_only and req.keyplan.get("placement") == "standalone":
@@ -539,10 +542,10 @@ def do_render(req: RenderRequest):
             shutil.copy(prims_src, os.path.join(out, f"{sheet_id}.prims.json"))
         # Preserve the key-plan plate image alongside the sheet. The config keeps
         # only the plate_id, and the plate lives in the sweepable uploads dir — so
-        # copy it in (mirroring the prims-on-save above) to survive the 24h sweep.
+        # copy it in (mirroring the prims-on-save above) to survive the uploads sweep.
         # The ext is derived from the stored upload filename, not assumed.
         plate_id = (req.keyplan or {}).get("plate_id")
-        if plate_id and not req.plan_only:
+        if plate_id:
             for fn in glob.glob(os.path.join(UP_DIR, f"{plate_id}_plate*")):
                 ext = os.path.splitext(fn)[1]
                 try:
@@ -745,9 +748,7 @@ def _render_plan_only(prop_id, sheet_id):
     config = compose_config(load_property(prop_id), cfg.get("metadata"), cfg.get("rooms"))
     config["plan_only"] = True
     svg, png, meta = render(raw["prims"], config)
-    png_width = (min(2400, max(1000, round(meta["page"]["w"] * 2)))
-                 if meta.get("plan_only") else SHEET_PNG_W)
-    svg, png = _apply_custom_fonts(svg, png, config.get("font_faces"), png_width=png_width)
+    svg, png = _apply_custom_fonts(svg, png, config.get("font_faces"), png_width=_png_width(meta))
     return {"svg": svg, "png": png}
 
 

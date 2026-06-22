@@ -1,3 +1,15 @@
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Backend virtualenv + transient runtime data (not source)
+app/backend/.venv/
+app/backend/data/uploads/
+app/backend/data/sheets/
+
+# Node / Vite
+app/frontend/node_modules/
+app/frontend/dist/
+
+# Large CAD source files — reference samples only, never processed by the app
+*.rvt

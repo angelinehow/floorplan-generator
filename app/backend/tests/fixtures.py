@@ -20,7 +20,7 @@ _BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
 
-import ezdxf  # noqa: E402
+from ezdxf.filemanagement import new  # noqa: E402
 from PIL import Image, ImageDraw  # noqa: E402
 
 
@@ -60,7 +60,7 @@ def build_unit_dxf(path, *, insunits=2, wall_kind="line",
     `wall_kind`: entity type for the walls — use 'lwpolyline'/'polyline' to
     exercise the polyline geometry path.
     """
-    doc = ezdxf.new("R2010")
+    doc = new("R2010")
     doc.header["$INSUNITS"] = insunits
     msp = doc.modelspace()
 
@@ -92,7 +92,7 @@ def build_unit_dxf(path, *, insunits=2, wall_kind="line",
 def build_sheet_dxf(path):
     """A 'sheet' export: a titleblock and some text, but NO wall geometry.
     parse_dxf must reject this with a ParseError."""
-    doc = ezdxf.new("R2010")
+    doc = new("R2010")
     msp = doc.modelspace()
     # titleblock border lives on a non-wall layer, so it is not wall geometry
     msp.add_line((0, 0), (100, 0), dxfattribs={"layer": "A-ANNO-TTLB"})

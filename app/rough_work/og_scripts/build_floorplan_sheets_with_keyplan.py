@@ -1,4 +1,5 @@
 import json, html, cairosvg
+from typing import Any
 import numpy as np
 from PIL import Image, ImageDraw
 
@@ -26,8 +27,8 @@ DASHED_LAYERS = {'A-DETL-HDLN','A-FLOR-OVHD'}
 UNITS = {
  '1A': dict(
    geom='/home/claude/geom_1A.json',
-   title='ONE BED', sub='SUITE 202', sf='517 SF',
-   out='/home/claude/800-princess-one-bed-1A.svg',
+   title='ONE BED', sub='SUITE 202', sf='517 SF', kp='1A', kp_floor='SECOND FLOOR',
+   out='/home/claude/800-princess-one-bed-1A-keyplan.svg',
    rooms=[
      ('BEDROOM',     "14'4\" x 9'3\"",  (-9620,-9460, -78, 24),  1.0),
      ('LIVING ROOM', "14'9\" x 9'2\"",  (-9620,-9455, -193,-93), 1.0),
@@ -38,8 +39,8 @@ UNITS = {
    ]),
  'GS': dict(
    geom='/home/claude/geom_GS.json',
-   title='GUEST SUITE', sub='SUITE 110', sf='506 SF',
-   out='/home/claude/800-princess-guest-suite.svg',
+   title='GUEST SUITE', sub='SUITE 110', sf='506 SF', kp='GS', kp_floor='GROUND FLOOR',
+   out='/home/claude/800-princess-guest-suite-keyplan.svg',
    rooms=[
      ('BEDROOM',     "9'9\" x 12'9\"",  (-9614,-9512,-1282,-1135), 1.0),
      ('LIVING ROOM', "9'3\" x 17'10\"", (-9500,-9392,-1330,-1130), 1.0),
@@ -60,8 +61,47 @@ def text_w(s, size, ls):
     """generous width estimate for letter-spaced uppercase sans"""
     return 0.70 * size * len(s) + ls * (len(s) - 1) + 6
 
+
+# ---- mini keyplan for footer (schematic, traced from viewer) ----
+def mini_keyplan(kind, ox, oy, scale):
+    CH, EM = CHARCOAL, EMBER
+    THIN = f'stroke="{CH}" stroke-opacity="0.38" stroke-width="0.5"'
+    out = []
+    def T(x,y): return (ox+x*scale, oy+y*scale)
+    def poly(pp):
+        s=" ".join(f"{T(x,y)[0]:.1f},{T(x,y)[1]:.1f}" for x,y in pp)
+        out.append(f'<polygon points="{s}" fill="#FFFFFF" stroke="{CH}" stroke-width="1.1" stroke-linejoin="round"/>')
+    def line(x1,y1,x2,y2):
+        a=T(x1,y1); b=T(x2,y2)
+        out.append(f'<line x1="{a[0]:.1f}" y1="{a[1]:.1f}" x2="{b[0]:.1f}" y2="{b[1]:.1f}" {THIN}/>')
+    def rect(x,y,w,h):
+        a=T(x,y)
+        out.append(f'<rect x="{a[0]:.1f}" y="{a[1]:.1f}" width="{w*scale:.1f}" height="{h*scale:.1f}" fill="{EM}" fill-opacity="0.92"/>')
+    def circ(x,y):
+        a=T(x,y); out.append(f'<circle cx="{a[0]:.1f}" cy="{a[1]:.1f}" r="{0.9*scale:.1f}" fill="{CH}" fill-opacity="0.4"/>')
+    if kind=='GS':
+        L,Tp,R,Bt=34,34,286,150; corr=92
+        poly([(L,Tp),(R,Tp),(R,Bt),(214,Bt),(214,164),(150,164),(150,Bt),(L,Bt)])
+        n=6; uw=(R-L)/n
+        for i in range(n):
+            ux=L+i*uw
+            if i==0: rect(ux,Tp,uw,corr-Tp)
+            elif i>0: line(ux,Tp,ux,corr)
+        line(L,corr,R,corr)
+        for cx in [80,120,160,200,240]: circ(cx,(corr+Bt)/2)
+    else:
+        L,Tp,R,Bt=34,40,286,150; c1,c2=88,102
+        poly([(L,Tp),(228,Tp),(228,34),(R,34),(R,Bt),(150,Bt),(150,162),(96,162),(96,Bt),(L,Bt)])
+        n=7; uw=(R-L)/n
+        for i in range(n):
+            ux=L+i*uw
+            if i>0: line(ux,Tp,ux,c1); line(ux,c2,ux,Bt)
+        rect(L+5*uw,Tp,uw,c1-Tp)
+        line(L,c1,R,c1); line(L,c2,R,c2)
+    return "\n".join(out)
+
 def build(tag):
-    u = UNITS[tag]
+    u: dict[str, Any] = UNITS[tag]
     prims = json.load(open(u['geom']))['prims']
 
     xs, ys, kept = [], [], []
@@ -152,6 +192,15 @@ def build(tag):
         else:
             room_labels.append(halo_text(px, py + n_size * 0.36, n_size, n_ls, 0.78, esc(name)))
 
+    # footer keyplan geometry: width ~150px on the right side of footer band
+    kp_w = 150; kp_scale = kp_w / 320.0; kp_h = 196 * kp_scale
+    kp_ox = PAGE_W - 60 - kp_w
+    kp_oy = (PAGE_H - FOOTER_H) + (FOOTER_H - kp_h)/2 - 4
+    kp_cx = kp_ox + kp_w/2
+    kp_svg = mini_keyplan(u['kp'], kp_ox, kp_oy, kp_scale)
+    kp_floor = u['kp_floor']
+    addr_x = kp_ox - 28
+
     def polyline_group(lines, style):
         return "\n".join(f'<polyline points="{pts_attr(p)}" {style}/>' for p in lines)
 
@@ -190,8 +239,11 @@ def build(tag):
   <text x="60" y="{PAGE_H-FOOTER_H+62}" font-family="{SERIF}" font-size="40" fill="#FFFFFF">{esc(u['title'])}</text>
   <line x1="62" y1="{PAGE_H-FOOTER_H+80}" x2="122" y2="{PAGE_H-FOOTER_H+80}" stroke="{EMBER}" stroke-width="2.5"/>
   <text x="60" y="{PAGE_H-FOOTER_H+106}" font-size="12.5" letter-spacing="3" fill="{LIMESTONE}">{esc(u['sub'])}&#160;&#160;&#183;&#160;&#160;{esc(u['sf'])}</text>
-  <text x="{PAGE_W-60}" y="{PAGE_H-FOOTER_H+62}" text-anchor="end" font-size="12" letter-spacing="2.5" fill="{EMBER}">800 PRINCESS ST &#183; KINGSTON, ON</text>
-  <text x="{PAGE_W-60}" y="{PAGE_H-FOOTER_H+104}" text-anchor="end" font-size="8.5" letter-spacing="1" fill="{LIMESTONE}" fill-opacity="0.45">FOR ILLUSTRATIVE PURPOSES ONLY. DIMENSIONS ARE APPROXIMATE AND SUBJECT TO CHANGE.</text>
+  <text x="{addr_x}" y="{PAGE_H-FOOTER_H+62}" text-anchor="end" font-size="12" letter-spacing="2.5" fill="{EMBER}">800 PRINCESS ST &#183; KINGSTON, ON</text>
+  <text x="{addr_x}" y="{PAGE_H-FOOTER_H+104}" text-anchor="end" font-size="8.5" letter-spacing="1" fill="{LIMESTONE}" fill-opacity="0.45">FOR ILLUSTRATIVE PURPOSES ONLY. DIMENSIONS APPROXIMATE.</text>
+  <!-- footer keyplan -->
+  <g>{kp_svg}</g>
+  <text x="{kp_cx}" y="{PAGE_H-22}" text-anchor="middle" font-family="{SANS}" font-size="7" letter-spacing="2" fill="{LIMESTONE}" fill-opacity="0.6">{kp_floor}</text>
 </svg>'''
     open(u['out'], 'w').write(svg)
     cairosvg.svg2png(url=u['out'], write_to=u['out'].replace('.svg','.png'), output_width=900)

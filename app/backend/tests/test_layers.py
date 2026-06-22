@@ -25,7 +25,7 @@ import shutil
 import tempfile
 import unittest
 
-import ezdxf
+from ezdxf.filemanagement import readfile, new
 from fastapi import HTTPException, UploadFile
 
 import main
@@ -59,7 +59,7 @@ class RealFileInferenceTest(unittest.TestCase):
 
     @unittest.skipUnless(os.path.exists(ARMSTRONG), "Armstrong sample DXF absent")
     def test_armstrong_autodetects_and_labels(self):
-        doc = ezdxf.readfile(ARMSTRONG)
+        doc = readfile(ARMSTRONG)
         lm, report = infer_layer_map(doc)
         # walls/text detected by name + content, not the Revit defaults
         self.assertIn("A_WALL_FULL_N", lm["wall_line"])
@@ -73,7 +73,7 @@ class RealFileInferenceTest(unittest.TestCase):
     def test_a12_multiunit_parses(self):
         # A12 is the deferred multi-unit case (see MULTI_UNIT_SPLIT_TODO.md): it
         # must at least parse to a combined sheet, not raise.
-        doc = ezdxf.readfile(A12)
+        doc = readfile(A12)
         lm, _ = infer_layer_map(doc)
         res = parse_dxf(A12, layer_map=lm)
         self.assertGreater(len(res["prims"]), 100)
@@ -82,7 +82,7 @@ class RealFileInferenceTest(unittest.TestCase):
     def test_revit_file_inference_agrees_with_defaults(self):
         """On a clean Revit-scheme file, inference must reproduce the default
         roles and the same labels — the no-regression guard."""
-        doc = ezdxf.readfile(PRINCESS_1A)
+        doc = readfile(PRINCESS_1A)
         lm, _ = infer_layer_map(doc)
         self.assertIn("A-WALL", lm["wall_line"])
         self.assertIn("I-WALL", lm["wall_line"])
@@ -100,7 +100,7 @@ class RealFileInferenceTest(unittest.TestCase):
         (CLAUDE.md's documented sheet-rejection guarantee). Real sheets keep
         their content in paperspace, so modelspace has no wall geometry."""
         from engine import ParseError
-        doc = ezdxf.readfile(PRINCESS_SHEET)
+        doc = readfile(PRINCESS_SHEET)
         lm, _ = infer_layer_map(doc)
         with self.assertRaises(ParseError):
             parse_dxf(PRINCESS_SHEET, layer_map=lm)
@@ -113,7 +113,7 @@ def _build_autocad_scheme_dxf(path):
     """A single unit drawn with AutoCAD-house layer names (not the Revit scheme):
     walls on A_WALL_FULL_N, poché on A_WALL_CAVITY, room text on A_TEXT_BLOWUPS,
     a door on DOOR-line, and dimension text on DIM (must drop, not seed)."""
-    doc = ezdxf.new("R2010")
+    doc = new("R2010")
     doc.header["$INSUNITS"] = 1  # inches, like the real A12
     msp = doc.modelspace()
     ring = [(0, 0), (240, 0), (240, 180), (0, 180), (0, 0)]
@@ -135,7 +135,7 @@ class SyntheticSchemeTest(unittest.TestCase):
         fd, cls.path = tempfile.mkstemp(suffix=".dxf")
         os.close(fd)
         _build_autocad_scheme_dxf(cls.path)
-        cls.doc = ezdxf.readfile(cls.path)
+        cls.doc = readfile(cls.path)
         cls.lm, cls.report = infer_layer_map(cls.doc)
 
     @classmethod
