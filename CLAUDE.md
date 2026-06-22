@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An **internal web app** that turns a single-unit CAD floor plan (DXF, or DWG via converter) into a branded marketing sheet (SVG + PNG), with auto-placed room labels and a drag-to-fix editor. A non-technical coordinator uploads a file, picks a property, and exports a finished sheet — no coordinate entry.
 
-Read `APP_BUILD_SPEC.md` (the engineering spec) and `FLOORPLAN_WORKFLOW.md` (the manual process this automates) before making non-trivial changes — they encode the *why* behind most design decisions. The shipping app lives entirely under `app/`.
+Read `app/rough_work/wip_specs/APP_BUILD_SPEC.md` (the engineering spec) and `app/rough_work/wip_specs/FLOORPLAN_WORKFLOW.md` (the manual process this automates) before making non-trivial changes — they encode the *why* behind most design decisions. The shipping app lives entirely under `app/`.
 
-The two top-level scripts (`build_floorplan_sheets.py`, `build_floorplan_sheets_with_keyplan.py`) are the **original prototype engine** the app was refactored from. `app/backend/engine/render.py` is intended to produce byte-for-byte identical output to these — they are the reference, not dead code, but the app does not import them.
+The two prototype scripts under `app/rough_work/og_scripts/` (`build_floorplan_sheets.py`, `build_floorplan_sheets_with_keyplan.py`) are the **original prototype engine** the app was refactored from. `app/backend/engine/render.py` is intended to produce byte-for-byte identical output to these — they are the reference, not dead code, but the app does not import them.
 
 ## Commands
 
@@ -30,7 +30,7 @@ npm run build                   # production bundle
 
 Open http://localhost:5173. The Vite dev server proxies `/api/*` to the backend (see `vite.config.js`), so the frontend calls same-origin `/api` and there is no CORS config to manage. Point at a different backend with `VITE_API_BASE`.
 
-There is a backend test suite under `app/backend/tests/` (stdlib `unittest`, hermetic — synthetic DXFs/images, temp data dirs); run it from `app/backend/` with `python -m unittest discover -s tests -p "test_*.py"`. See `tests/README.md`. No linter is configured. The repo is under git; only the prototype scripts and the `app/` tree are tracked source.
+There is a backend test suite under `app/backend/tests/` (stdlib `unittest`, hermetic — synthetic DXFs/images, temp data dirs); run it from `app/backend/` with `python -m unittest discover -s tests -p "test_*.py"`. See `tests/README.md`. No linter is configured. The repo is under git; the tracked source is the `app/` tree (including the prototype scripts under `app/rough_work/`) plus the root `README.md`/`CLAUDE.md`.
 
 ### Environment dependencies
 - **PNG output** is rendered by `cairosvg` on the always-on path (`render.py`). *When a property carries uploaded brand fonts*, `main.py::_apply_custom_fonts()` re-renders the PNG with `resvg-py` instead — `cairosvg` can't embed arbitrary fonts — and falls back to the cairosvg PNG if resvg is unavailable (the SVG carries the font either way). Because cairosvg needs the native Cairo lib, `render.py::_register_cairo_dll_dir()` auto-registers the GTK `bin` dir on `PATH`/`CAIROCFFI_DLL_DIRECTORIES` at import; if PNG fails with a DLL error, install the GTK3 runtime.
@@ -77,11 +77,11 @@ Both endpoints interpret layers through the property's **layer map** (`DEFAULT_L
 
 **Coordinate transform** — the contract between `render.py` and `LabelOverlay.jsx`. `render` returns `meta.transform = {tx, ty, s}`; SVG/viewBox ↔ DXF coords convert as `svgX = tx + dxfX*s`, `dxfY = (ty - svgY)/s`. The overlay uses this to translate a dropped/nudged handle position back into the room's DXF `x`/`y` override sent on the next `/render`. A room with explicit `x`/`y` skips auto-placement; clearing them (double-click a handle) returns it to automatic placement.
 
-**Sheet re-open** — saving a sheet persists its editable config *and* a copy of its `prims.json` into `data/sheets/<prop>/`. `/reopen` copies that geometry back into `uploads/` under a fresh `doc_id`, so the 24h uploads sweep doesn't break editing.
+**Sheet re-open** — saving a sheet persists its editable config *and* a copy of its `prims.json` into `data/sheets/<prop>/`. `/reopen` copies that geometry back into `uploads/` under a fresh `doc_id`, so the uploads sweep doesn't break editing.
 
-**Uploads cache sweep** — files in `data/uploads/` older than `UPLOAD_TTL_HOURS` (default 24, constant in `main.py`) are deleted on startup and at the start of every `/parse` and `/plate`. A `/render` against an expired `doc_id` returns 404 "Upload expired"; the frontend detects this and clears the session.
+**Uploads cache sweep** — files in `data/uploads/` older than `UPLOAD_TTL_HOURS` (default 168 / 1 week, constant in `main.py`) are deleted on startup and at the start of every `/parse` and `/plate`. A `/render` against an expired `doc_id` returns 404 "Upload expired"; the frontend detects this and clears the session.
 
-## Gotchas to preserve (hard-won; see APP_BUILD_SPEC.md §10)
+## Gotchas to preserve (hard-won; see app/rough_work/wip_specs/APP_BUILD_SPEC.md §10)
 
 - The CAD input must be a Revit **view export, not a sheet** — a sheet has no wall geometry. `parse_dxf` raises `ParseError` with guidance when geometry is absent.
 - The occupancy integral image must be **int64** (`render.py` casts via `.astype(np.int64)`); `uint8` overflows and produces random label placement.

@@ -17,8 +17,9 @@ The renderer expects the same `prims` shape the original
 
 import re
 import statistics
-import ezdxf
 from ezdxf import path as ezpath
+from ezdxf.filemanagement import readfile
+from ezdxf.lldxf.const import DXFStructureError
 
 # --- recursion / flattening tuning ------------------------------------------
 MAX_DEPTH = 5          # cap INSERT explosion depth (spec: 4-6)
@@ -31,6 +32,11 @@ FLATTEN_DIST = 0.5     # arc/spline flattening tolerance (drawing units)
 # hang or OOM.
 MAX_PRIMS = 200_000           # stop collecting geometry past this
 MAX_PTS_PER_ENTITY = 8_000    # downsample a single huge polyline/spline
+
+# --- dimension estimation ---------------------------------------------------
+# Perpendicular fan offsets (fractions of the plan span, both signs) used to
+# probe for walls around a seed point when estimating a room's W x H.
+FAN_OFFSET_FRACS = (0.015, -0.015, 0.03, -0.03)
 
 
 def _cap_points(pts):
@@ -178,8 +184,8 @@ def _estimate_dims(segs, sx, sy, unit_to_feet, span_x, span_y):
     if not unit_to_feet:
         return None
     # perpendicular fan offsets: small fractions of the plan span, both signs
-    ox = [0.0] + [s * span_y for s in (0.015, -0.015, 0.03, -0.03)]
-    oy = [0.0] + [s * span_x for s in (0.015, -0.015, 0.03, -0.03)]
+    ox = [0.0] + [s * span_y for s in FAN_OFFSET_FRACS]
+    oy = [0.0] + [s * span_x for s in FAN_OFFSET_FRACS]
     w_u = _span(segs, sx, sy, "x", ox)
     h_u = _span(segs, sx, sy, "y", oy)
     if w_u is None or h_u is None:
@@ -210,7 +216,7 @@ def _is_furniture(block_name: str) -> bool:
     return any(frag in up for frag in FURNITURE_FRAGMENTS)
 
 
-def _clean_text(raw: str) -> str:
+def _clean_text(raw: str | None) -> str:
     """Strip MTEXT formatting codes and whitespace."""
     if raw is None:
         return ""
@@ -357,8 +363,8 @@ def parse_dxf(filepath, layer_map=None, seed_box_frac=0.13):
     layer_map = layer_map or DEFAULT_LAYER_MAP
 
     try:
-        doc = ezdxf.readfile(filepath)
-    except (IOError, ezdxf.DXFStructureError) as exc:
+        doc = readfile(filepath)
+    except (IOError, DXFStructureError) as exc:
         raise ParseError(f"Could not read DXF: {exc}")
 
     msp = doc.modelspace()

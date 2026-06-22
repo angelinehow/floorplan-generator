@@ -91,14 +91,15 @@ def _text_w(s, size, ls):
 def _glyph_width(font_data_uri, s, size, ls):
     """Exact pixel width of `s` from an embedded font's own advance widths, so
     header spacing adapts to whatever font is in use instead of a fixed guess."""
-    import base64
-    import io as _io
-    from fontTools.ttLib import TTFont
+    from typing import Any, cast
+    from fontTools.ttLib import TTFont   # heavy; imported lazily, only when sizing custom-font headers
     raw = base64.b64decode(font_data_uri.split(",", 1)[1])
-    f = TTFont(_io.BytesIO(raw), fontNumber=0)
-    upm = f["head"].unitsPerEm or 1000
-    cmap = f.getBestCmap()
-    hmtx = f["hmtx"]
+    f = TTFont(io.BytesIO(raw), fontNumber=0)
+    # fontTools types subtables as the abstract base, so Pylance can't see the
+    # concrete attrs (unitsPerEm/metrics) that exist at runtime — cast past it.
+    upm = cast(Any, f["head"]).unitsPerEm or 1000
+    cmap = f.getBestCmap() or {}
+    hmtx = cast(Any, f["hmtx"])
     total = 0.0
     for ch in s:
         gn = cmap.get(ord(ch))
@@ -267,7 +268,7 @@ def render(prims, config):
             (swing_lines if len(pts) > 6 else door_lines).append(pts)
         elif role == "dashed":
             dash_lines.append(pts)
-        elif role in ("room_label",):
+        elif role == "room_label":
             continue
         else:
             thin_lines.append(pts)

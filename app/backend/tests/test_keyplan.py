@@ -30,6 +30,7 @@ class KeyplanGroupTest(unittest.TestCase):
         m = re.search(r'<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" '
                       r'height="([\d.]+)" fill="#C17F3A" fill-opacity="0.55"', svg)
         self.assertIsNotNone(m)
+        assert m is not None  # narrow for the type checker (assertIsNotNone doesn't)
         self.assertEqual([float(g) for g in m.groups()], [25.0, 40.0, 50.0, 20.0])
 
     def test_no_box_means_no_cell(self):
