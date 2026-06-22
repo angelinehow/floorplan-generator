@@ -236,7 +236,9 @@ async def font_info(file: UploadFile = File(...)):
         from fontTools.ttLib import TTFont, TTCollection
         f = (TTCollection(io.BytesIO(raw)).fonts[0] if ext == ".ttc"
              else TTFont(io.BytesIO(raw)))
-        nm = f["name"]
+        # fontTools types subtables as the abstract DefaultTable, so Pylance can't
+        # see the concrete `name` table's getDebugName — narrow to Any (runtime fine).
+        nm: Any = f["name"]
         family = (nm.getDebugName(16) or nm.getDebugName(1)
                   or os.path.splitext(os.path.basename(file.filename or "Font"))[0])
     except Exception as exc:
@@ -859,3 +861,42 @@ def delete_sheet(prop_id, sheet_id):
         sheets = [s for s in _read_json(index, []) if s.get("sheet_id") != sheet_id]
         _write_json(index, sheets, indent=2, ensure_ascii=False)
     return {"deleted": sheet_id}
+
+
+# --------------------------------------------------------------------------- #
+# production: serve the built SPA from this same app (single origin)
+# --------------------------------------------------------------------------- #
+# In dev the React app runs on Vite (:5173) and reaches this API through Vite's
+# /api proxy, which strips the /api prefix before forwarding (vite.config.js).
+# In a built deployment there is no Vite — this one app serves BOTH the static
+# frontend and the API on a single origin. The frontend always calls /api/*
+# (frontend/api.js), so we strip a leading /api here to reach the root-mounted
+# routes above. This activates ONLY when a built frontend (frontend/dist) is
+# present, so local dev behaviour is completely unchanged.
+_FRONTEND_DIST = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+
+if os.path.isdir(_FRONTEND_DIST):
+    from fastapi.staticfiles import StaticFiles
+
+    class _StripApiPrefix:
+        """ASGI middleware: rewrite /api/* -> /* so the SPA's same-origin API
+        calls reach the existing root-mounted routes. No-op in dev (the Vite
+        proxy already stripped /api before the request reached this app)."""
+
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope.get("type") == "http":
+                path = scope.get("path", "")
+                if path == "/api" or path.startswith("/api/"):
+                    scope = dict(scope)
+                    scope["path"] = path[4:] or "/"
+                    scope["raw_path"] = scope["path"].encode("utf-8")
+            await self.app(scope, receive, send)
+
+    app.add_middleware(_StripApiPrefix)
+    # Mounted last so every API route above takes precedence; html=True serves
+    # index.html at / (the app is a single page with no client-side routing).
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="spa")
