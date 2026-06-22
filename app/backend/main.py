@@ -51,7 +51,7 @@ for d in (PROP_DIR, UP_DIR, SHEET_DIR):
     os.makedirs(d, exist_ok=True)
 
 MAX_UPLOAD_MB = 60
-UPLOAD_TTL_HOURS = 24   # working files in uploads/ older than this get swept
+UPLOAD_TTL_HOURS = 168  # working files in uploads/ older than this get swept (1 week)
 
 logger = logging.getLogger(__name__)
 
