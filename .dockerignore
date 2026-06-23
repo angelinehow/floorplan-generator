@@ -1,0 +1,20 @@
+# Keep the build context small and reproducible. The frontend is rebuilt in the
+# image (stage 1), deps are reinstalled, and transient/large files don't belong.
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+
+app/backend/data/uploads/
+app/backend/data/sheets/
+
+app/frontend/node_modules/
+app/frontend/dist/
+
+# Large reference samples + scratch material — not needed to run the app
+app/references/
+app/rough_work/
+
+.git/
+.gitignore
+**/*.md
