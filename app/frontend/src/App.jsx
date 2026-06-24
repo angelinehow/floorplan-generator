@@ -181,6 +181,7 @@ export default function App() {
   const [seedLayer, setSeedLayer] = useState(null);  // detected layer_map to pre-fill a NEW property
   const [showLayerReview, setShowLayerReview] = useState(false);  // detected-layers review table expanded
   const [openSection, setOpenSection] = useState("upload");
+  const [focusRoomIdx, setFocusRoomIdx] = useState(null);  // index of a just-added room whose name input to focus
 
   const [panelW, setPanelW] = useState(380);
   const [collapsed, setCollapsed] = useState(false);
@@ -305,6 +306,16 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
+
+  // Focus and select a just-added room's name input so the first keystroke
+  // replaces the "NEW ROOM" placeholder. Runs after the new room has rendered
+  // (addRoom sets the index; the docs update and this both flush together).
+  useEffect(() => {
+    if (focusRoomIdx == null) return;
+    const el = document.querySelector(`input[data-room-name="${focusRoomIdx}"]`);
+    if (el) { el.focus(); el.select(); el.scrollIntoView({ block: "nearest" }); }
+    setFocusRoomIdx(null);
+  }, [focusRoomIdx]);
 
   // auto preview (debounced) whenever the active doc's inputs change
   useEffect(() => {
@@ -599,6 +610,33 @@ export default function App() {
       }],
       ignored: d.ignored.filter((_, j) => j !== i),
     }));
+  }
+  // Add a room that auto-detection missed. It's seeded at the plan's center as
+  // an explicit x/y override (cascaded slightly so repeated adds don't perfectly
+  // overlap) so the new draggable label appears at a predictable, visible spot
+  // instead of wherever the occupancy search lands it — the user then drags it
+  // into place, or double-clicks its handle to return it to auto-placement.
+  // Falls back to auto-placement when no preview has rendered yet (no extents).
+  function addRoom() {
+    if (!active) return;
+    const i = active.rooms.length;   // index the new room will occupy
+    patchActive((d) => {
+      const ext = d.placement && d.placement.extents;
+      let x = null, y = null;
+      if (ext) {
+        const cx = (ext.minx + ext.maxx) / 2, cy = (ext.miny + ext.maxy) / 2;
+        const span = Math.max(ext.maxx - ext.minx, ext.maxy - ext.miny);
+        const off = (d.rooms.length % 6) * span * 0.04;   // cascade so adds don't stack
+        x = cx + off; y = cy - off;
+      }
+      return {
+        rooms: [...d.rooms, {
+          name: "NEW ROOM", dims: null, seed_x: null, seed_y: null,
+          rect: null, x, y, font_scale: 1.0, show_dims: true,
+        }],
+      };
+    });
+    setFocusRoomIdx(i);
   }
 
   // ---- export --------------------------------------------------------------
@@ -969,7 +1007,7 @@ export default function App() {
                 {active.rooms.map((r, i) => (
                   <div className="room" key={i}>
                     <div className="top">
-                      <input type="text" value={r.name}
+                      <input type="text" value={r.name} data-room-name={i}
                         onChange={(e) => updateRoom(i, { name: e.target.value })} />
                       <button className="chip" onClick={() => removeRoom(i)}>✕</button>
                     </div>
@@ -985,6 +1023,16 @@ export default function App() {
                     </div>
                   </div>
                 ))}
+                <button className="btn ghost" style={{ marginTop: 8 }}
+                  onClick={addRoom}
+                  title="Add a room the drawing didn't label — type its name, then drag it into place">
+                  + Add room
+                </button>
+                {active.rooms.length === 0 && (
+                  <p className="subtle" style={{ marginTop: 8 }}>
+                    No room labels were detected. Add them manually with “+ Add room”.
+                  </p>
+                )}
                 <p className="subtle" style={{ marginTop: 8 }}>
                   Missing dimensions? Check if any were missed by uploading your DXF file at{" "}
                   <a href="https://sharecad.org/" target="_blank" rel="noopener noreferrer">
