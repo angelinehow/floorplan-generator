@@ -154,6 +154,12 @@ A key plan is generated **on request**, not by default. Two placements:
 - **Standalone sheet** — its own branded page.
 - **Footer key plan** — a small plate in the floor plan's footer (`build_floorplan_sheets_with_keyplan.py`).
 
+> **In the app:** you now supply a **finished key-plan image** — exported elsewhere with the target
+> unit already marked — and the app just trims its surrounding whitespace and embeds it (aspect-fit,
+> floor label, "SCHEMATIC — NOT TO SCALE"). The app no longer traces the plate or shades the unit
+> itself. The hand-trace method below is the original manual/prototype way of *producing* such a
+> plate; use whatever gets you a clean finished image.
+
 The plate is a **simplified hand-trace** of the Part 2 screenshot — a recognizable outline with the
 floor split into a rough grid of units and the target unit shaded in the accent color. It is **not**
 to scale and the unit count is approximate; always label it "SCHEMATIC — NOT TO SCALE." That's the

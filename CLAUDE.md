@@ -44,7 +44,7 @@ Browser (React, app/frontend)        Backend (FastAPI, app/backend/main.py)
 ─────────────────────────            ──────────────────────────────────────
 upload + property picker  ─POST────► /parse    DXF/DWG -> geometry cache + seeded labels
 live SVG preview          ◄────────  /render   prims + config -> SVG + PNG (+ keyplan)
-drag-to-fix label handles ─POST────► /plate    floor-plate image upload (key plans)
+drag-to-fix label handles ─POST────► /plate    finished key-plan image (autocropped on intake)
 metadata + key-plan form             /properties, /sheets/*   CRUD + library
 ```
 
@@ -54,8 +54,8 @@ metadata + key-plan form             /properties, /sheets/*   CRUD + library
 - `main.py` — all HTTP endpoints, file-based storage, uploads-cache sweep. No framework magic; read top to bottom.
 - `engine/parse.py` — DXF → `prims` (flat geometry) + auto-seeded `labels` + `ignored_text` + metadata `suggestions`. Raises `ParseError` for sheet exports / empty geometry.
 - `engine/render.py` — `render(prims, config) -> (svg, png, meta)`. The core.
-- `engine/keyplan.py` — schematic "where's my unit" plate: `keyplan_group()` (footer mini-plate) and `render_keyplan_sheet()` (standalone page).
-- `engine/keyplan_trace.py` — auto-trace a raw plate screenshot into a clean filled footprint silhouette (numpy + PIL): `trace_plate()` caches a palette-independent 3-level mask (0 outside / 255 interior / 128 traced interior wall ink clipped to the footprint); `colorize()` applies the brand palette at render time — `mid` fill, `dark` perimeter, black interior room divisions. "Seal strength" closes doorway gaps; falls back to dimmed-screenshot mode when a plate won't trace cleanly.
+- `engine/keyplan.py` — schematic "where's my unit" plate. The user uploads a *finished* key-plan image (the unit already marked on it); `autocrop()` trims its surrounding whitespace on intake (`/plate`) and the image is embedded as reference by `keyplan_group()` (footer mini-plate) and `render_keyplan_sheet()` (standalone page) — both aspect-fit (no stretch) and marked SCHEMATIC / NOT TO SCALE. There is no in-app unit box, footprint trace, or north arrow anymore; the uploaded image is the artifact.
+- `engine/keyplan_trace.py` — numpy/PIL morphology helpers. **`solidify_walls()` is live**: `render.py` imports it to synthesize the solid-wall poché for plain-AutoCAD DXFs that ship no wall HATCH. The footprint tracer `trace_plate()`/`colorize()` (palette-independent 3-level mask + brand colorize) are **retired** — the key-plan intake no longer traces a screenshot (it embeds a finished image; see `keyplan.py`). **Keep this module** anyway — `render.py` still depends on `solidify_walls`/`_hex` from it, so don't delete it as "dead".
 - `engine/brand.py` — `extract_brand()` pulls a color palette (and PDF-embedded font names) from an uploaded brand file to auto-fill the property-setup form. `dark`/`light` are dependable; `accent`/`mid` are guesses, so all dominant swatches are returned for the user to re-pick.
 - `engine/convert.py` — DWG→DXF via ODA CLI; degrades gracefully when absent.
 - `data/properties/*.json` — one file per property (brand + layer map); `800-prin.json` is the worked example. `data/uploads/` — transient parse/plate cache. `data/sheets/<prop>/` — saved sheet library.

@@ -36,8 +36,8 @@ rectangle. Users only correct the occasional miss, visually.
 > Two different "coordinate" jobs, so we're precise about it:
 > - **Label placement inside the plan** — important; drives whether the sheet looks clean. Now
 >   auto-seeded from `G-ANNO-TEXT`, with a drag-to-fix fallback (§4).
-> - **Key-plan unit shading** — purely cosmetic ("which rectangle is lit up"). Approximate is fine;
->   handled by a simple picker (§6). Key plans are opt-in.
+> - **Key plan** — purely cosmetic ("which rectangle is lit up"). Schematic is fine; the user
+>   uploads a finished image with the unit already marked and the app embeds it (§6). Opt-in.
 
 ---
 
@@ -52,8 +52,8 @@ rectangle. Users only correct the occasional miss, visually.
    e.g. "1 BED - 1A" and "202" appear as text in the file; offer them as suggestions.)
 5. **Review & nudge**: any label that landed badly can be dragged; dimensions can be edited inline.
    Toggle a room's dimension on/off.
-6. *(Optional)* **Add a key plan**: upload a floor-plate screenshot, click the unit's rough location
-   on it, choose standalone or footer placement.
+6. *(Optional)* **Add a key plan**: upload a finished key-plan image (unit already marked); the app
+   trims its whitespace and embeds it. Choose standalone or footer placement.
 7. **Export**: download SVG + PNG. Saved to the property's library.
 
 Target: a clean, single-unit DXF → finished sheet in **under 2 minutes**, no tweaks needed in the
@@ -135,13 +135,15 @@ ones that look wrong. In clean units they touch nothing.
 
 ## 6. Key plans (optional feature, build second)
 
-- User uploads a floor-plate screenshot (captured via Autodesk Viewer per the workflow doc).
-- App shows it; user **clicks the unit's approximate location** (or drags a box). That's the shaded
-  cell — cosmetic, approximate by design.
-- App overlays a simplified plate trace + accent-shaded unit + north arrow + floor label, marked
-  "SCHEMATIC — NOT TO SCALE."
+- User uploads a **finished key-plan image** — exported elsewhere with this unit already marked
+  (the unit shading is no longer applied in-app). Schematic by design.
+- App trims the surrounding whitespace on intake (`autocrop`) and embeds the image as reference,
+  aspect-fit, with a floor label, marked "SCHEMATIC — NOT TO SCALE."
 - Output as standalone sheet or footer mini-plate (the engine already supports both).
 - Ship the main generator first; key plans are a clean add-on once the core works.
+- *(Superseded design: the original build traced the screenshot into a footprint silhouette and
+  let the user drag a box over the unit + add a north arrow. That intake was replaced by the
+  "embed a finished export" flow above.)*
 
 ---
 
