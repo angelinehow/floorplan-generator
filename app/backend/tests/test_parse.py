@@ -12,7 +12,7 @@ import unittest
 import fixtures as fx
 from engine import parse_dxf, ParseError
 from engine.parse import (_estimate_dims, _cap_points, _clean_text,
-                          _looks_like_room, MAX_PTS_PER_ENTITY)
+                          _looks_like_room, _area_to_sf, MAX_PTS_PER_ENTITY)
 
 
 class ParseGeometryTest(unittest.TestCase):
@@ -79,6 +79,68 @@ class ParseGeometryTest(unittest.TestCase):
     def test_metadata_suggestions(self):
         self.assertEqual(self.result["suggestions"],
                          {"title": "2 BED", "suite": "204", "sf": "650 SF"})
+
+
+class AreaSuggestionTest(unittest.TestCase):
+    """Unit area is read by its content signature (a number + an area unit), so
+    it works from a tag on ANY layer — including a 'drop' layer (A-AREA-IDEN)
+    whose geometry/text is kept off the drawn sheet. Reading the tag for a
+    suggestion is deliberately separate from rendering it."""
+
+    def test_metric_tag_on_drop_layer_read_not_rendered(self):
+        """A '48.0 m²' tag on the drop layer becomes the SF suggestion (517 SF),
+        and never leaks into the drawn/re-addable text."""
+        path = fx.write_temp_dxf(area_tag="48.0 m²", include_text=False)
+        try:
+            r = parse_dxf(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(r["suggestions"]["sf"], "517 SF")
+        self.assertEqual(r["ignored_text"], [])    # tag not re-addable
+        self.assertEqual(r["labels"], [])           # tag not seeded as a room
+        self.assertNotIn("A-AREA-IDEN", {p[0] for p in r["prims"]})
+
+    def test_visible_suite_wins_over_drop_layer_number(self):
+        """A bare number on a drop layer (a column-grid / stair tag) must not
+        preempt the real on-plan suite — drop text only fills an empty slot."""
+        path = fx.write_temp_dxf(area_tag="12")     # stray number on A-AREA-IDEN
+        try:
+            r = parse_dxf(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(r["suggestions"]["suite"], "204")   # visible, not "12"
+
+    def test_largest_area_wins_over_other_tags(self):
+        """With the fixture's '650 SF' text present too, the larger drop-layer
+        tag wins (a unit total beats incidental smaller numbers), and the tag
+        still never lands in ignored_text."""
+        path = fx.write_temp_dxf(area_tag="75.0 m²")   # 75 m² = 807 SF > 650
+        try:
+            r = parse_dxf(path)
+        finally:
+            os.remove(path)
+        self.assertEqual(r["suggestions"]["sf"], "807 SF")
+        ignored = {t["text"] for t in r["ignored_text"]}
+        self.assertEqual(ignored, {"2 BED", "204", "650 SF", "NORTH"})
+
+
+class AreaToSfTest(unittest.TestCase):
+    """_area_to_sf is the pure content-detector: metric m² is converted to SF,
+    imperial SF/SQFT is taken as-is, and anything without an area unit (a bare
+    suite number, a linear metre reading) is refused."""
+
+    def test_recognised_forms(self):
+        self.assertEqual(_area_to_sf("48.0 m²"), 517)      # metric, U+00B2
+        self.assertEqual(_area_to_sf("48 m2"), 517)             # ascii fallback
+        self.assertEqual(_area_to_sf("650 SF"), 650)
+        self.assertEqual(_area_to_sf("1,175.0 SQ.FT."), 1175)   # comma + decimal
+        self.assertEqual(_area_to_sf("517 S.F."), 517)
+
+    def test_refusals(self):
+        self.assertIsNone(_area_to_sf("202"))        # suite, not area
+        self.assertIsNone(_area_to_sf("1 BED - 1A")) # title, not area
+        self.assertIsNone(_area_to_sf("2.7 m"))      # linear metres, not area
+        self.assertIsNone(_area_to_sf("3m2"))        # below plausible floor
 
 
 class ParseRejectionTest(unittest.TestCase):
