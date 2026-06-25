@@ -39,7 +39,7 @@ from typing import Optional, List, Dict, Any
 from ezdxf.filemanagement import readfile
 
 from engine import (parse_dxf, ParseError, DEFAULT_LAYER_MAP, infer_layer_map,
-                    render, SHEET_PNG_W, render_keyplan_sheet, trace_plate, colorize_trace,
+                    render, render_png, SHEET_PNG_W, render_keyplan_sheet, autocrop_plate,
                     dwg_to_dxf, converter_available,
                     ConversionError, extract_brand, BrandError)
 import storage   # filesystem (local/Docker) or Vercel Blob, chosen by env token
@@ -195,7 +195,6 @@ def _apply_custom_fonts(svg, png, font_faces, png_width=SHEET_PNG_W):
     tmp = []
     try:
         import tempfile
-        import resvg_py
         for f in faces:
             head, _, b64 = f["data"].partition(",")
             ext = ".otf" if ("otf" in head or "opentype" in head) else ".ttf"
@@ -203,7 +202,10 @@ def _apply_custom_fonts(svg, png, font_faces, png_width=SHEET_PNG_W):
             os.write(fd, base64.b64decode(b64))
             os.close(fd)
             tmp.append(path)
-        png2 = bytes(resvg_py.svg_to_bytes(svg_string=svg2, width=png_width, font_files=tmp))
+        # uploaded brand faces take precedence; render_png appends the bundled
+        # Arimo/Gelasio fallbacks so any text the brand font doesn't cover (and the
+        # generic serif/sans stacks) still render on a no-system-font host.
+        png2 = render_png(svg2, png_width, extra_font_files=tmp)
         return svg2, png2
     except Exception:
         return svg2, png
@@ -242,36 +244,6 @@ async def font_info(file: UploadFile = File(...)):
     data = f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
     return {"family": family, "data": data,
             "format": "opentype" if ext == ".otf" else "truetype"}
-
-
-def _trace_mask(plate_id, seal):
-    """Auto-traced footprint mask for (plate, seal), computed once and cached on
-    disk (the morphology + BFS are too slow to run per render). Returns the
-    grayscale mask PNG bytes and coverage fraction, or (None, 0.0) if no plate."""
-    seal = max(7, min(61, int(seal) | 1))   # clamp + force odd
-    cache = os.path.join(UP_DIR, f"{plate_id}_tracew{seal}.png")
-    covfile = cache + ".cov"
-    cached = storage.read_bytes(cache)
-    if cached is not None:
-        # coverage is persisted alongside the mask so a cache hit still reports it
-        cov = None   # older cache without a sidecar — coverage unknown
-        try:
-            cov_text = storage.read_text(covfile)
-            if cov_text is not None:
-                cov = float(cov_text.strip())
-        except ValueError:
-            pass
-        return cached, cov
-    raw = _plate_bytes(plate_id)
-    if not raw:
-        return None, 0.0
-    mask, cov = trace_plate(raw, seal=seal)
-    storage.write_bytes(cache, mask)
-    try:
-        storage.write_text(covfile, repr(float(cov)))
-    except OSError:
-        pass
-    return mask, cov
 
 
 # --------------------------------------------------------------------------- #
@@ -379,13 +351,16 @@ async def upload_plate(file: UploadFile = File(...)):
     raw = await file.read()
     if len(raw) > 25 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Plate image too large (max 25 MB).")
-    ext = os.path.splitext(file.filename or "plate.png")[1] or ".png"
+    # The uploaded image is the finished key plan. Trim its surrounding
+    # whitespace once, on intake, and store the cropped PNG — every consumer
+    # (preview, footer, standalone) then sees the same tight image (WYSIWYG).
+    cropped = autocrop_plate(raw)
     plate_id = uuid.uuid4().hex[:12]
-    storage.write_bytes(os.path.join(UP_DIR, f"{plate_id}_plate{ext}"), raw)
+    storage.write_bytes(os.path.join(UP_DIR, f"{plate_id}_plate.png"), cropped)
     w = h = None
     try:
         from PIL import Image
-        w, h = Image.open(io.BytesIO(raw)).size
+        w, h = Image.open(io.BytesIO(cropped)).size
     except Exception:
         pass
     return {"plate_id": plate_id, "width": w, "height": h}
@@ -393,9 +368,9 @@ async def upload_plate(file: UploadFile = File(...)):
 
 @app.get("/plate/{plate_id}")
 def get_plate(plate_id: str):
-    """Serve a previously uploaded plate image. A saved key plan persists only
-    the plate_id, so re-opening or restoring a sheet needs this to repaint the
-    box-placement picker."""
+    """Serve a previously uploaded (cropped) plate image. A saved key plan
+    persists only the plate_id, so re-opening or restoring a sheet needs this to
+    repaint the key-plan preview."""
     _safe_id(plate_id, "plate id")
     for fn in storage.glob(os.path.join(UP_DIR, f"{plate_id}_plate*")):
         media = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
@@ -405,26 +380,6 @@ def get_plate(plate_id: str):
         if data is not None:
             return Response(content=data, media_type=media)
     raise HTTPException(status_code=404, detail="Plate not found or expired.")
-
-
-class TraceRequest(BaseModel):
-    plate_id: str
-    seal: int = 35
-    palette: Optional[Dict[str, str]] = None
-
-
-@app.post("/plate/trace")
-def trace_plate_preview(req: TraceRequest):
-    """Auto-trace a plate into a footprint silhouette and return a coloured
-    preview (data URI) + coverage, so the UI can show the result, let the user
-    tune seal strength, and fall back to the raw screenshot if it won't trace."""
-    _safe_id(req.plate_id, "plate id")
-    mask, cov = _trace_mask(req.plate_id, req.seal)
-    if mask is None:
-        raise HTTPException(status_code=404, detail="Plate not found or expired.")
-    png = colorize_trace(mask, req.palette or {})
-    data_uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
-    return {"preview": data_uri, "coverage": cov}
 
 
 # --------------------------------------------------------------------------- #
@@ -482,10 +437,6 @@ def do_render(req: RenderRequest):
     if req.keyplan and not req.plan_only:
         kp = dict(req.keyplan)
         kp["plate_bytes"] = _plate_bytes(kp.get("plate_id"))
-        if kp.get("mode") == "traced" and kp.get("plate_id"):
-            mask, _ = _trace_mask(kp["plate_id"], kp.get("seal", 35))
-            if mask is not None:
-                kp["silhouette_bytes"] = colorize_trace(mask, config.get("palette") or {})
         config["keyplan"] = kp
     try:
         svg, png, meta = render(prims, config)

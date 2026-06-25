@@ -29,7 +29,7 @@ TestCases.)
 | `test_parse.py` | `prims` shape contract, furniture/drop-layer exclusion, room-vs-title-vs-equipment classification, title/suite/sf suggestions, dimension estimation **and its deliberate refusals** (unitless / span-too-wide / extreme-aspect), large-entity downsampling, sheet/empty-file rejection |
 | `test_render.py` | SVG well-formedness + page size, real PNG, the **SVG↔DXF transform contract** the drag editor relies on, label override vs auto-placement, palette defaults/overrides, watermark text-scaling vs image, XML escaping, the bare `plan_only` export |
 | `test_brand.py` | palette role assignment by luminance/chroma, accent-gating against near-black chromatics, swatch list contract, PDF font-name cleaning, error handling |
-| `test_keyplan.py` | unit-cell box→frame coordinate mapping, standalone sheet branding + NOT-TO-SCALE marker, plate-required guard, deterministic trace mask, brand-coloured silhouette |
+| `test_keyplan.py` | autocrop trims whitespace deterministically (and leaves a blank image alone), the finished image is embedded aspect-fit at full opacity, standalone sheet branding + NOT-TO-SCALE marker, plate-required guard |
 | `test_convert.py` | graceful degradation when the ODA converter is absent (forced, machine-independent) |
 | `test_api.py` | id traversal safety, uploads sweep, config composition, render-from-cache + expired-doc 404, property CRUD, save→reopen→delete sheet lifecycle, font-embed hook, upload guards (`.rvt`/unsupported/oversize/happy-path) |
 

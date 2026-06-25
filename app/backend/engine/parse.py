@@ -88,7 +88,30 @@ DEFAULT_LAYER_MAP = {
 
 UNIT_TITLE_RE = re.compile(r"\b(STUDIO|JR\.?\s*\d|\d\s*BED|\d\s*BR|ONE|TWO|THREE)\b", re.I)
 SUITE_RE = re.compile(r"^\s*#?\s*(\d{2,4})\s*$")
-SF_RE = re.compile(r"(\d{2,5})\s*(?:SF|SQ\.?\s*FT|SQFT|S\.F\.)", re.I)
+
+# Unit area annotation -> square feet. The *content signature* (a number with
+# an area unit) is the discriminator, not the layer name — so this works no
+# matter which layer a given CAD author put the tag on. Two families:
+#   metric    "48.0 m²" / "48 m2"          -> value * SQFT_PER_SQM
+#   imperial  "650 SF" / "1,175.0 SQ.FT."  -> value as-is
+# A bare number ("202", a suite) or a linear metre reading ("2.7 m") carries no
+# area unit and is correctly skipped.
+SQFT_PER_SQM = 10.7639
+AREA_SQM_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*m\s*[²2]", re.I)
+AREA_SF_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(?:SF|SQ\.?\s*FT\.?|SQFT|S\.F\.)", re.I)
+MIN_PLAUSIBLE_SF = 50      # reject stray small matches ("3m2") and noise
+
+
+def _area_to_sf(text):
+    """Largest unit area in `text` as whole square feet, or None. Metric m² is
+    converted to SF; imperial SF/SQFT is taken as-is. Returns the max so a unit
+    total wins over any per-room area tags in the same string."""
+    sf = 0.0
+    for m in AREA_SQM_RE.finditer(text):
+        sf = max(sf, float(m.group(1).replace(",", "")) * SQFT_PER_SQM)
+    for m in AREA_SF_RE.finditer(text):
+        sf = max(sf, float(m.group(1).replace(",", "")))
+    return int(round(sf)) if sf >= MIN_PLAUSIBLE_SF else None
 
 # DXF $INSUNITS code -> feet per drawing unit. Only codes we can trust to
 # convert; anything else (notably 0 = unitless) yields None and we leave
@@ -274,8 +297,10 @@ def _collect_entities(entity, block_name, depth, out_geom, out_text, role_sets):
     label_layers = role_sets["label"]
 
     if dxftype in ("TEXT", "MTEXT"):
-        if layer in drop_layers:
-            return
+        # Drop-layer text is captured (flagged), not discarded: it never renders
+        # or becomes a re-addable label, but it is still scanned for metadata
+        # suggestions — a Revit area/suite/title tag commonly sits on a drop
+        # layer (A-AREA-IDEN) yet describes the unit. Reading != rendering.
         try:
             raw = entity.text if dxftype == "MTEXT" else entity.dxf.text
             ins = entity.dxf.insert
@@ -285,6 +310,7 @@ def _collect_entities(entity, block_name, depth, out_geom, out_text, role_sets):
                 "y": float(ins[1]),
                 "layer": layer,
                 "is_label_layer": layer in label_layers,
+                "drop": layer in drop_layers,
             })
         except Exception:
             pass
@@ -408,23 +434,44 @@ def parse_dxf(filepath, layer_map=None, seed_box_frac=0.13):
 
     labels, ignored = [], []
     suggestions: dict[str, str | None] = {"title": None, "suite": None, "sf": None}
+    # Room-seeding's "few texts -> trust non-label layers too" heuristic counts
+    # only drawable text; drop-layer tags shouldn't inflate it.
+    n_visible = sum(1 for t in raw_text if not t.get("drop"))
+    best_sf = 0
+    suite_from_drop = title_from_drop = False
 
     for t in raw_text:
         txt = t["text"]
         if not txt:
             continue
-        if suggestions["sf"] is None:
-            m = SF_RE.search(txt)
-            if m:
-                suggestions["sf"] = f"{m.group(1)} SF"
-        if suggestions["suite"] is None:
-            m = SUITE_RE.match(txt)
-            if m:
-                suggestions["suite"] = m.group(1)
-        if suggestions["title"] is None and UNIT_TITLE_RE.search(txt):
-            suggestions["title"] = txt.upper()
 
-        if _looks_like_room(txt) and (t["is_label_layer"] or len(raw_text) < 60):
+        # Metadata suggestions are content-detected and scanned across ALL text,
+        # drop-layer tags included (the unit's area/suite/title block lives on a
+        # drop layer but still describes the unit).
+        drop = bool(t.get("drop"))
+        # Area has a strong signature (number + area unit), so the largest match
+        # anywhere wins — a unit total beats any per-room tags.
+        sf = _area_to_sf(txt)
+        if sf is not None:
+            best_sf = max(best_sf, sf)
+        # Suite/title have weak signatures (a bare number; a unit-type phrase),
+        # so on-plan text wins: a drop-layer tag (the area-ID block — but also
+        # column/stair tags, which carry stray numbers) only fills a slot no
+        # visible text claims, and a later visible match overrides a drop guess.
+        m = SUITE_RE.match(txt)
+        if m and (suggestions["suite"] is None or (suite_from_drop and not drop)):
+            suggestions["suite"] = m.group(1)
+            suite_from_drop = drop
+        if UNIT_TITLE_RE.search(txt) and (suggestions["title"] is None or
+                                          (title_from_drop and not drop)):
+            suggestions["title"] = txt.upper()
+            title_from_drop = drop
+
+        # Label seeding and the re-addable ignored-text list are about what gets
+        # DRAWN, so drop-layer text is excluded from both.
+        if t.get("drop"):
+            continue
+        if _looks_like_room(txt) and (t["is_label_layer"] or n_visible < 60):
             x, y = t["x"], t["y"]
             x = min(max(x, minx), maxx)
             y = min(max(y, miny), maxy)
@@ -448,6 +495,9 @@ def parse_dxf(filepath, layer_map=None, seed_box_frac=0.13):
             })
         else:
             ignored.append({"text": txt, "x": t["x"], "y": t["y"]})
+
+    if best_sf:
+        suggestions["sf"] = f"{best_sf:,} SF"
 
     return {
         "prims": prims,

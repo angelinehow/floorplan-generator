@@ -89,14 +89,12 @@ Open http://localhost:5173. The dev server proxies `/api/*` to the backend on
    arrow keys** (Shift = 10px) for fine placement. Double-click a handle to
    clear the override and return it to automatic placement. Moved labels show an
    ember handle; auto-placed ones show a hollow handle.
-7. *(Optional)* **Add a key plan**: enable the Key plan section, upload (or
-   paste) a floor-plate screenshot, and drag a box over the unit. Pick a **look**
-   — **Auto-traced plan** (the app extracts a clean filled footprint silhouette
-   in the brand palette; a *seal-strength* slider tunes how aggressively wall
-   gaps are closed) or **Screenshot** (the raw image embedded lightened, a
-   fallback for busy plates that won't trace cleanly). Set a floor label and
-   choose **footer mini-plate** (embedded on the unit sheet) or **standalone
-   sheet** (its own branded page). It is always marked SCHEMATIC / NOT TO SCALE.
+7. *(Optional)* **Add a key plan**: enable the Key plan section, then upload (or
+   paste) a **finished key-plan image** — one you've already exported with this
+   unit marked on it. The app trims the surrounding whitespace and embeds it as
+   reference (no in-app box-drawing or tracing). Set a floor label and choose
+   **footer mini-plate** (embedded on the unit sheet) or **standalone sheet**
+   (its own branded page). It is always marked SCHEMATIC / NOT TO SCALE.
 8. **Save to library & export** to write the SVG + PNG into the property’s
    library and get download links.
 9. The **library** (bottom of the page) lists every saved sheet for the

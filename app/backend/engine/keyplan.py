@@ -1,22 +1,22 @@
 """
 Key plans (spec §6): a schematic "where is my unit in the building" diagram.
 
-Approach for the app: the user uploads a floor-plate screenshot (captured per
-FLOORPLAN_WORKFLOW Part 2) and drags a box over their unit. We embed that
-screenshot, lightened, with the unit cell shaded in the brand accent, a north
-arrow, and a floor label — always marked SCHEMATIC / NOT TO SCALE. Two outputs:
+Approach for the app: the user exports a finished key-plan image (the unit
+already marked on it) and uploads it. We trim the surrounding whitespace on
+intake and embed it as reference — always marked SCHEMATIC / NOT TO SCALE.
+Two outputs:
 
   - footer mini-plate  -> keyplan_group(), embedded in the main sheet footer
   - standalone sheet   -> render_keyplan_sheet(), its own branded page
 
-This is intentionally schematic and approximate (the box is hand-placed); that
-is the right fidelity for a building-locator thumbnail.
+The image is the finished artifact, so we don't draw a unit box, trace a
+footprint, or add a north arrow — we just crop and frame what the user gives us.
 """
 
 import base64
 import html
 import io
-from PIL import Image
+from PIL import Image, ImageChops
 
 PAGE_W, PAGE_H = 1000, 1080
 HEADER_H = 92
@@ -35,6 +35,38 @@ def img_size(plate_bytes):
         return (4, 3)
 
 
+def autocrop(plate_bytes, tol=12):
+    """Trim surrounding whitespace from an exported key-plan image so it sits
+    tight in the frame, then re-encode as PNG.
+
+    Handles both a transparent background (crop to the opaque region) and a
+    (near-)white one (crop to the region that differs from white by more than
+    `tol`, so faint anti-aliased margins go too). A few px of padding keeps the
+    plan off the frame edge. Returns the original bytes unchanged if the image
+    can't be opened or is effectively blank (nothing to crop)."""
+    try:
+        im = Image.open(io.BytesIO(plate_bytes)).convert("RGBA")
+    except Exception:
+        return plate_bytes
+    alpha = im.getchannel("A")
+    if alpha.getextrema()[0] < 255:
+        bbox = alpha.getbbox()                       # real transparency -> opaque region
+    else:
+        rgb = im.convert("RGB")
+        bg = Image.new("RGB", rgb.size, (255, 255, 255))
+        diff = ImageChops.difference(rgb, bg).convert("L")
+        bbox = diff.point(lambda p: 255 if p > tol else 0).getbbox()
+    if not bbox:
+        return plate_bytes                           # all blank -> leave as-is
+    pad = max(6, round(0.015 * max(im.size)))
+    l, t, r, b = bbox
+    box = (max(0, l - pad), max(0, t - pad),
+           min(im.width, r + pad), min(im.height, b + pad))
+    buf = io.BytesIO()
+    im.crop(box).save(buf, "PNG")
+    return buf.getvalue()
+
+
 def _data_uri(plate_bytes):
     head = plate_bytes[:4]
     mime = "image/png"
@@ -46,63 +78,23 @@ def _data_uri(plate_bytes):
     return f"data:{mime};base64,{b64}"
 
 
-def _north_arrow(cx, cy, r, deg, dark, accent):
-    """A small, unobtrusive north arrow rotated by `deg` (clockwise from up).
-    No opaque disc — a faint ring + accent needle that sits over the plan
-    without masking it."""
-    return (
-        f'<g transform="translate({cx:.1f},{cy:.1f}) rotate({deg})" opacity="0.6">'
-        f'<circle r="{r:.1f}" fill="none" stroke="{dark}" '
-        f'stroke-width="0.8" stroke-opacity="0.45"/>'
-        f'<polygon points="0,{-r*0.72:.1f} {r*0.28:.1f},{r*0.28:.1f} '
-        f'0,{r*0.08:.1f} {-r*0.28:.1f},{r*0.28:.1f}" fill="{accent}"/>'
-        f'<text x="0" y="{-r*0.9:.1f}" text-anchor="middle" '
-        f'font-family="{DEFAULT_SANS}" font-size="{r*0.58:.1f}" '
-        f'fill="{dark}">N</text></g>'
-    )
+def keyplan_group(plate_bytes, ox, oy, w, h, palette, with_border=True):
+    """SVG fragment: the (pre-cropped) key-plan image framed in box (ox,oy,w,h)
+    and embedded at full opacity. The image is the finished key plan the user
+    exported — the unit is already marked on it — so we just frame and place it.
 
-
-def keyplan_group(plate_bytes, box, ox, oy, w, h, palette,
-                  north_deg=0, with_north=True, with_border=True,
-                  silhouette=None):
-    """
-    SVG fragment: a plate diagram in box (ox,oy,w,h) with the unit cell shaded
-    in accent. `box` = [fx, fy, fw, fh] as fractions of the image (None -> no
-    shaded cell yet).
-
-    Two looks share the same frame (so box fractions map identically):
-      - silhouette given -> the auto-traced footprint (already brand-coloured,
-        transparent background) drawn opaque: the clean "basic key plan" look.
-      - silhouette None   -> the raw screenshot embedded lightened to 50%.
+    The caller fits (ox,oy,w,h) to the image's aspect ratio, so the embed
+    preserves aspect (`xMidYMid meet`) and the optional border hugs the image.
     """
     dark = palette.get("dark", "#2B1F14")
-    accent = palette.get("accent", "#C17F3A")
     parts = []
     if with_border:
         parts.append(f'<rect x="{ox:.1f}" y="{oy:.1f}" width="{w:.1f}" '
                      f'height="{h:.1f}" fill="#FFFFFF" stroke="{dark}" '
                      f'stroke-width="1.1"/>')
-    if silhouette is not None:
-        parts.append(f'<image href="{_data_uri(silhouette)}" x="{ox:.1f}" '
-                     f'y="{oy:.1f}" width="{w:.1f}" height="{h:.1f}" '
-                     f'preserveAspectRatio="none"/>')
-    else:
-        parts.append(f'<image href="{_data_uri(plate_bytes)}" x="{ox:.1f}" '
-                     f'y="{oy:.1f}" width="{w:.1f}" height="{h:.1f}" '
-                     f'opacity="0.5" preserveAspectRatio="none"/>')
-    if box and len(box) == 4:
-        fx, fy, fw, fh = box
-        rx = ox + fx * w
-        ry = oy + fy * h
-        rw = fw * w
-        rh = fh * h
-        parts.append(f'<rect x="{rx:.1f}" y="{ry:.1f}" width="{rw:.1f}" '
-                     f'height="{rh:.1f}" fill="{accent}" fill-opacity="0.55" '
-                     f'stroke="{accent}" stroke-width="1.5"/>')
-    if with_north:
-        nr = min(w, h) * 0.06
-        parts.append(_north_arrow(ox + w - nr - 6, oy + nr + 6, nr,
-                                  north_deg, dark, accent))
+    parts.append(f'<image href="{_data_uri(plate_bytes)}" x="{ox:.1f}" '
+                 f'y="{oy:.1f}" width="{w:.1f}" height="{h:.1f}" '
+                 f'preserveAspectRatio="xMidYMid meet"/>')
     return "\n".join(parts)
 
 
@@ -136,9 +128,7 @@ def render_keyplan_sheet(config):
     pw, ph = iw * s, ih * s
     ox = (PAGE_W - pw) / 2
     oy = HEADER_H + (PAGE_H - HEADER_H - FOOTER_H - ph) / 2
-    group = keyplan_group(plate, kp.get("box"), ox, oy, pw, ph, palette,
-                          north_deg=kp.get("north_deg", 0),
-                          silhouette=kp.get("silhouette_bytes"))
+    group = keyplan_group(plate, ox, oy, pw, ph, palette)
 
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {PAGE_W} {PAGE_H}" font-family="{sans}">
   <rect width="{PAGE_W}" height="{PAGE_H}" fill="{light}"/>

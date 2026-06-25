@@ -78,6 +78,46 @@ SKINNY_WALL_W = 0.8   # wall-outline stroke for the "skinny" (no-fill) wall styl
 DEFAULT_SERIF = "Georgia, 'Times New Roman', serif"
 DEFAULT_SANS = "'Helvetica Neue', Helvetica, Arial, sans-serif"
 
+# --- bundled fallback fonts for the PNG raster --------------------------------
+# resvg can only draw glyphs for fonts it can find. Slim/serverless runtimes
+# (Vercel's Python Lambda) ship with NO system fonts, so resvg silently drops
+# ALL text and PNG exports come out with a blank header/footer and missing room
+# labels — even though the SVG looks correct (the browser supplies the fonts for
+# the live preview). We ship two metric-compatible open fonts in engine/fonts/
+# and hand them to resvg on every raster, mapping the generic serif/sans-serif
+# families so the Georgia/Helvetica CSS stacks resolve to them when the named
+# faces aren't installed: Gelasio ~ Georgia (serif headers), Arimo ~ Arial/
+# Helvetica (everything else). On a host that DOES have Georgia/Arial (local dev)
+# resvg matches those by name first, so this changes nothing there. See
+# engine/fonts/README.md. Paths are absolute so loading is CWD-independent.
+_FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+_BUNDLED_FONT_FILES = [
+    os.path.join(_FONT_DIR, f) for f in (
+        "Arimo-Regular.ttf", "Arimo-Bold.ttf",
+        "Gelasio-Regular.ttf", "Gelasio-Bold.ttf",
+    )
+]
+_BUNDLED_SERIF_FAMILY = "Gelasio"
+_BUNDLED_SANS_FAMILY = "Arimo"
+
+
+def render_png(svg_string, width, extra_font_files=None):
+    """Rasterize an SVG to PNG bytes with the bundled fallback fonts available.
+
+    extra_font_files (uploaded brand faces) take precedence; the bundled
+    Arimo/Gelasio cover any text the brand font doesn't, and the serif/sans
+    generic-family mapping ensures the default Georgia/Helvetica stacks render
+    even on a host with no system fonts (serverless). A missing bundled file is
+    skipped rather than raising, so resvg degrades to its own font handling."""
+    fonts = list(extra_font_files or []) + [f for f in _BUNDLED_FONT_FILES if os.path.exists(f)]
+    return bytes(resvg_py.svg_to_bytes(
+        svg_string=svg_string, width=width,
+        font_files=fonts or None,
+        serif_family=_BUNDLED_SERIF_FAMILY,
+        sans_serif_family=_BUNDLED_SANS_FAMILY,
+        font_family=_BUNDLED_SANS_FAMILY,
+    ))
+
 DEFAULT_PALETTE = {
     "dark": "#2B1F14",
     "accent": "#C17F3A",
@@ -429,7 +469,7 @@ def render(prims, config):
             f'{geom}\n{labels}\n</svg>'
         )
         out_w = min(2400, max(1000, round(vbw * 2)))
-        png_bytes = bytes(resvg_py.svg_to_bytes(svg_string=bare, width=out_w))
+        png_bytes = render_png(bare, out_w)
         # legacy: png_bytes = cairosvg.svg2png(bytestring=bare.encode("utf-8"), output_width=out_w)
         meta = {
             "transform": {"tx": round(tx, 4), "ty": round(ty, 4), "s": round(s, 6)},
@@ -525,14 +565,19 @@ def render(prims, config):
     floor_label_svg = ""
     if keyplan.get("plate_bytes") and keyplan.get("placement") == "footer":
         iw, ih = img_size(keyplan["plate_bytes"])
-        kp_w = 150.0
-        kp_h = min(104.0, kp_w * ih / max(iw, 1))
+        # Aspect-fit the (already-cropped) image into the footer slot so a
+        # portrait plan isn't stretched into a landscape box. Center it in the
+        # band ABOVE the disclaimer line (which sits at PAGE_H-18) so the plan
+        # never crowds the "SCHEMATIC, NOT TO SCALE" caption beneath it.
+        kp_max_w, kp_max_h = 150.0, 86.0
+        sc = min(kp_max_w / max(iw, 1), kp_max_h / max(ih, 1))
+        kp_w, kp_h = iw * sc, ih * sc
         kp_ox = PAGE_W - 60 - kp_w
-        kp_oy = (PAGE_H - FOOTER_H) + (FOOTER_H - kp_h) / 2 - 8
-        footer_kp_svg = keyplan_group(keyplan["plate_bytes"], keyplan.get("box"),
-                                      kp_ox, kp_oy, kp_w, kp_h, palette,
-                                      north_deg=keyplan.get("north_deg", 0),
-                                      silhouette=keyplan.get("silhouette_bytes"))
+        region_top = (PAGE_H - FOOTER_H) + 12
+        region_bot = PAGE_H - 30
+        kp_oy = region_top + max(0.0, (region_bot - region_top - kp_h) / 2)
+        footer_kp_svg = keyplan_group(keyplan["plate_bytes"],
+                                      kp_ox, kp_oy, kp_w, kp_h, palette)
         addr_x = kp_ox - 24
         fl = esc((keyplan.get("floor_label") or "").upper())
         kp_cx = kp_ox + kp_w / 2
@@ -572,7 +617,7 @@ def render(prims, config):
   {floor_label_svg}
 </svg>'''
 
-    png_bytes = bytes(resvg_py.svg_to_bytes(svg_string=svg, width=SHEET_PNG_W))
+    png_bytes = render_png(svg, SHEET_PNG_W)
     # legacy: png_bytes = cairosvg.svg2png(bytestring=svg.encode("utf-8"), output_width=SHEET_PNG_W)
     meta = {
         "transform": {"tx": round(tx, 4), "ty": round(ty, 4), "s": round(s, 6)},

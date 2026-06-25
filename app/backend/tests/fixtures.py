@@ -44,7 +44,7 @@ def _add_walls(msp, layer, kind, rect):
 
 
 def build_unit_dxf(path, *, insunits=2, wall_kind="line",
-                   include_text=True, include_furniture=True):
+                   include_text=True, include_furniture=True, area_tag=None):
     """A representative single-unit view export.
 
     20 x 15 (drawing-unit) outer room on A-WALL, poche hatch on A-WALL-PATT,
@@ -59,6 +59,9 @@ def build_unit_dxf(path, *, insunits=2, wall_kind="line",
     `insunits`: DXF $INSUNITS code (2 = feet, 0 = unitless).
     `wall_kind`: entity type for the walls — use 'lwpolyline'/'polyline' to
     exercise the polyline geometry path.
+    `area_tag`: if set, an MTEXT placed on the 'drop' layer A-AREA-IDEN (where
+    Revit writes the unit-area tag). Must never render or become a re-addable
+    label, but must still be read as the area suggestion.
     """
     doc = new("R2010")
     doc.header["$INSUNITS"] = insunits
@@ -73,6 +76,8 @@ def build_unit_dxf(path, *, insunits=2, wall_kind="line",
     msp.add_line((2, 2), (4, 4), dxfattribs={"layer": "A-DETL-HDLN"})
     # A-AREA-IDEN is a 'drop' layer -> this segment must never reach prims
     msp.add_line((1, 1), (2, 2), dxfattribs={"layer": "A-AREA-IDEN"})
+    if area_tag is not None:
+        msp.add_mtext(area_tag, dxfattribs={"layer": "A-AREA-IDEN"}).set_location((1, 13))
 
     if include_text:
         for txt, xy in [("BEDROOM", (10, 7)), ("2 BED", (10, 12)),
@@ -163,9 +168,9 @@ def brand_image_png(bands):
 
 
 def plate_png(size=(200, 150)):
-    """A floor-plate screenshot: a thick black rectangular wall ring enclosing
-    a white interior on a white background. trace_plate should seal it into a
-    solid footprint silhouette."""
+    """A key-plan image: a thick black rectangular wall ring enclosing a white
+    interior, set on a white background with a margin — so autocrop has
+    whitespace to trim down to the ring."""
     img = Image.new("RGB", size, "white")
     draw = ImageDraw.Draw(img)
     w, h = size
