@@ -13,7 +13,7 @@ const exportName = (propId, title, suffix = "") => {
 // Unified saved-sheet library across all properties: filter by property,
 // search, thumbnails, downloads, rename, re-open, delete. Each sheet carries
 // its own property_id / property_name (from GET /sheets).
-export default function Library({ sheets, onReopen, onDelete, onRename, onBatchDelete }) {
+export default function Library({ sheets, onReopen, onDelete, onRename, onBatchDelete, onReopenAll }) {
   const [q, setQ] = useState("");
   const [prop, setProp] = useState("");        // "" = all properties
   const [editing, setEditing] = useState(null); // sheet_id being renamed
@@ -106,6 +106,19 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
     if (proceeded) exitSelecting();
   }
 
+  // Re-open the selected sheets, each as its own editor tab — the portfolio-
+  // update path: "Select all" then this opens the whole library for editing.
+  // Parent does the work (and confirms large batches); we just exit on success.
+  async function reopenSelected() {
+    closeMenu();
+    const items = selectedSheets().map((s) => ({
+      property_id: s.property_id, sheet_id: s.sheet_id, title: s.title,
+    }));
+    if (!items.length) return;
+    const proceeded = await onReopenAll(items);
+    if (proceeded) exitSelecting();
+  }
+
   async function downloadSelected(format, planOnly = false) {
     closeMenu();
     const items = selectedSheets()
@@ -158,6 +171,8 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
                 </button>
                 {menuOpen && (
                   <div className="libmenu">
+                    <button className="libmenu-item" onClick={reopenSelected}>Open in editor tabs</button>
+                    <div className="libmenu-sep" />
                     <button className="libmenu-item" onClick={() => setDlOpen((o) => !o)}>
                       Download as<span className="caret">{dlOpen ? "▾" : "▸"}</span>
                     </button>
