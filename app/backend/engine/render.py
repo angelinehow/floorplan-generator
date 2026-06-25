@@ -565,14 +565,19 @@ def render(prims, config):
     floor_label_svg = ""
     if keyplan.get("plate_bytes") and keyplan.get("placement") == "footer":
         iw, ih = img_size(keyplan["plate_bytes"])
-        kp_w = 150.0
-        kp_h = min(104.0, kp_w * ih / max(iw, 1))
+        # Aspect-fit the (already-cropped) image into the footer slot so a
+        # portrait plan isn't stretched into a landscape box. Center it in the
+        # band ABOVE the disclaimer line (which sits at PAGE_H-18) so the plan
+        # never crowds the "SCHEMATIC, NOT TO SCALE" caption beneath it.
+        kp_max_w, kp_max_h = 150.0, 86.0
+        sc = min(kp_max_w / max(iw, 1), kp_max_h / max(ih, 1))
+        kp_w, kp_h = iw * sc, ih * sc
         kp_ox = PAGE_W - 60 - kp_w
-        kp_oy = (PAGE_H - FOOTER_H) + (FOOTER_H - kp_h) / 2 - 8
-        footer_kp_svg = keyplan_group(keyplan["plate_bytes"], keyplan.get("box"),
-                                      kp_ox, kp_oy, kp_w, kp_h, palette,
-                                      north_deg=keyplan.get("north_deg", 0),
-                                      silhouette=keyplan.get("silhouette_bytes"))
+        region_top = (PAGE_H - FOOTER_H) + 12
+        region_bot = PAGE_H - 30
+        kp_oy = region_top + max(0.0, (region_bot - region_top - kp_h) / 2)
+        footer_kp_svg = keyplan_group(keyplan["plate_bytes"],
+                                      kp_ox, kp_oy, kp_w, kp_h, palette)
         addr_x = kp_ox - 24
         fl = esc((keyplan.get("floor_label") or "").upper())
         kp_cx = kp_ox + kp_w / 2
