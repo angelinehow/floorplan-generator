@@ -616,7 +616,19 @@ select, input[type="text"] {
 .libactions button.del { color: #8a3d28; border-color: #e3b6a8; }
 .libhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .libhead h4 { margin: 0; }
-.libsearch { width: 200px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+.libsearch { flex: 1; min-width: 0; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
+/* search bar grows to fill the toolbar; sort control is pinned at its end */
+.libsearch-wrap { display: flex; flex: 1; min-width: 0; align-items: stretch; gap: 6px; }
+.libsort-wrap { position: relative; display: inline-flex; align-self: stretch; flex-shrink: 0; }
+.libsort {
+  display: inline-flex; align-items: center; gap: 4px; align-self: stretch; padding: 0 9px;
+  border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--charcoal); cursor: pointer;
+}
+.libsort:hover { color: var(--ember); border-color: var(--ember); }
+.libsort .sorticon { font-size: 14px; line-height: 1; }
+.libsort .caret { font-size: 9px; color: var(--muted); }
+.libmenu button.on { color: var(--ember); font-weight: 600; }
+.libmenu .sortcheck { font-size: 11px; color: var(--ember); }
 /* batch-download toolbar (in line with the search bar) */
 .libtools { display: flex; align-items: stretch; justify-content: flex-end; flex-wrap: nowrap; gap: 10px; flex: 1; min-width: 0; }
 .libbatch { display: flex; align-items: stretch; flex-wrap: nowrap; gap: 10px; flex: 1; }
