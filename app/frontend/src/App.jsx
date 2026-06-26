@@ -756,18 +756,24 @@ export default function App() {
   }
 
   // ---- library actions -----------------------------------------------------
+  // Build an editor doc from a /reopen config payload. Shared by single re-open
+  // and the batch "Open in editor tabs" so they construct tabs identically.
+  function docFromReopenCfg(cfg, prop, sheetId, title) {
+    const d = newDoc(cfg.property_id || prop);
+    d.docId = cfg.doc_id;
+    d.rooms = (cfg.rooms || []).map((r) => ({ ...r }));
+    d.meta = cfg.metadata || { title: "", suite: "", sf: "" };
+    d.keyplan = cfg.keyplan || null;
+    d.paintImage = cfg.paint_image || null;
+    d.savedId = sheetId;            // re-saving overwrites this library entry
+    d.fileName = `${title || "sheet"} (re-opened)`;
+    return d;
+  }
   async function reopen(s) {
     const prop = s.property_id || propertyId;
     try {
       const cfg = await reopenSheet(prop, s.sheet_id);
-      const d = newDoc(cfg.property_id || prop);
-      d.docId = cfg.doc_id;
-      d.rooms = (cfg.rooms || []).map((r) => ({ ...r }));
-      d.meta = cfg.metadata || { title: "", suite: "", sf: "" };
-      d.keyplan = cfg.keyplan || null;
-      d.paintImage = cfg.paint_image || null;
-      d.savedId = s.sheet_id;       // re-saving overwrites this library entry
-      d.fileName = `${s.title || "sheet"} (re-opened)`;
+      const d = docFromReopenCfg(cfg, prop, s.sheet_id, s.title);
       setDocs((ds) => [...ds, d]);
       setActiveId(d.id);
       setOpenSection("details");
@@ -775,6 +781,39 @@ export default function App() {
     } catch (e) {
       toast(e.message, "error");
     }
+  }
+  // Re-open several saved sheets at once, each as its own editor tab — the
+  // portfolio-update path (select sheets → "Open in editor tabs" → edit & re-save).
+  // Sequential so we don't fire a burst of /reopen geometry copies; one failure
+  // never sinks the rest. Returns true so the Library exits selection mode.
+  async function reopenAll(items) {
+    const n = items.length;
+    if (!n) return false;
+    if (n > BATCH_MAX && !window.confirm(
+      `Open ${n} sheets in ${n} editor tabs? That's a lot of tabs at once.`)) return false;
+    const opened = [];
+    const failed = [];
+    for (const it of items) {
+      const prop = it.property_id || propertyId;
+      try {
+        const cfg = await reopenSheet(prop, it.sheet_id);
+        opened.push(docFromReopenCfg(cfg, prop, it.sheet_id, it.title));
+      } catch (_) {
+        failed.push(it.title || it.sheet_id);
+      }
+    }
+    if (opened.length) {
+      setDocs((ds) => [...ds, ...opened]);
+      setActiveId(opened[0].id);      // jump to the first re-opened sheet
+      setOpenSection("details");
+    }
+    if (failed.length) {
+      toast(`Re-opened ${opened.length}, ${failed.length} failed: ${failed.join(", ")}`,
+        opened.length ? "info" : "error");
+    } else {
+      toast(`Re-opened ${opened.length} sheet${opened.length > 1 ? "s" : ""} in tabs — edit and re-save`, "success");
+    }
+    return true;
   }
   async function removeSheet(s) {
     if (!window.confirm(`Delete "${s.title || "Untitled"}"? This can't be undone.`)) return;
@@ -996,7 +1035,7 @@ export default function App() {
 
           <div className="step">
             <h3>
-              <span className="num">2</span> Upload floor plan
+              <span className="num">2</span> Upload floor plans
               <span className="infodot" tabIndex={0}>
                 ⓘ
                 <span className="infotip" role="tooltip">
@@ -1262,7 +1301,7 @@ export default function App() {
         {activeId === "library" ? (
           <Library sheets={sheets}
             onReopen={reopen} onDelete={removeSheet} onRename={renameSheetAction}
-            onBatchDelete={removeSheets} />
+            onBatchDelete={removeSheets} onReopenAll={reopenAll} />
         ) : !ready ? (
           <div className="placeholder">
             <div className="big">▭</div>

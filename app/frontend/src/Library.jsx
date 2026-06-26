@@ -10,12 +10,26 @@ const exportName = (propId, title, suffix = "") => {
   return propId ? `${slugify(propId)}-${base}` : base;
 };
 
+// Library sort options. `created`/`updated` are zero-padded "YYYY-MM-DD HH:MM[:SS]"
+// strings (from GET /sheets), so a plain string compare sorts them chronologically.
+const SORTS = [
+  { key: "edited-desc", label: "Recent first" },
+  { key: "edited-asc", label: "Recent last" },
+  { key: "title-asc", label: "Name A–Z" },
+  { key: "title-desc", label: "Name Z–A" },
+];
+
+// Sort order and the property-pill filter are sticky: they persist across tab
+// switches (the Library unmounts when you leave it) and reloads.
+const SORT_KEY = "fpsg.lib.sort";
+const FILTER_KEY = "fpsg.lib.filter";
+
 // Unified saved-sheet library across all properties: filter by property,
 // search, thumbnails, downloads, rename, re-open, delete. Each sheet carries
 // its own property_id / property_name (from GET /sheets).
-export default function Library({ sheets, onReopen, onDelete, onRename, onBatchDelete }) {
+export default function Library({ sheets, onReopen, onDelete, onRename, onBatchDelete, onReopenAll }) {
   const [q, setQ] = useState("");
-  const [prop, setProp] = useState("");        // "" = all properties
+  const [prop, setProp] = useState(() => localStorage.getItem(FILTER_KEY) || "");  // "" = all properties
   const [editing, setEditing] = useState(null); // sheet_id being renamed
   const [draft, setDraft] = useState("");
   // batch selection: a mode you opt into — checkboxes are hidden until then.
@@ -27,6 +41,12 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
   const [dlOpen, setDlOpen] = useState(false);        // download format submenu
   const menuRef = useRef(null);
   const closeMenu = () => { setMenuOpen(false); setDlOpen(false); };
+  const [sort, setSort] = useState(() => {           // library sort order
+    const saved = localStorage.getItem(SORT_KEY);
+    return SORTS.some((o) => o.key === saved) ? saved : "edited-desc";
+  });
+  const [sortOpen, setSortOpen] = useState(false);   // sort dropdown
+  const sortRef = useRef(null);
 
   const skey = (s) => `${s.property_id}/${s.sheet_id}`;
 
@@ -48,6 +68,24 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
     return `${s.title} ${s.suite} ${s.sf} ${s.property_name}`.toLowerCase().includes(query);
   });
 
+  // Sort what's shown. "Last edited" prefers `updated`, falling back to `created`
+  // for entries saved before that field existed. Selection logic stays keyed off
+  // `visible` (membership, not order), so only the grid below renders `sorted`.
+  const editedAt = (s) => s.updated || s.created || "";
+  // sort by the *displayed* name so "Name A–Z" matches what's on the card; in the
+  // "All" view that's the property-prefixed export name, so it groups by property
+  // (within one property the prefix is constant, so it's a plain title sort).
+  const titleKey = (s) => (s.title ? exportName(s.property_id, s.title) : "untitled").toLowerCase();
+  const sorted = [...visible].sort((a, b) => {
+    switch (sort) {
+      case "edited-asc": return editedAt(a).localeCompare(editedAt(b));
+      case "title-asc": return titleKey(a).localeCompare(titleKey(b));
+      case "title-desc": return titleKey(b).localeCompare(titleKey(a));
+      case "edited-desc":
+      default: return editedAt(b).localeCompare(editedAt(a));
+    }
+  });
+
   function startRename(s) {
     setEditing(s.sheet_id);
     setDraft(s.title || "");
@@ -61,6 +99,17 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
   // Selection is keyed globally but "select all" is scoped to what's visible.
   // Switching the property chip clears it (you're working within one property).
   useEffect(() => setSelected(new Set()), [prop]);
+
+  // Persist the sticky preferences so they survive unmount/reload.
+  useEffect(() => { localStorage.setItem(SORT_KEY, sort); }, [sort]);
+  useEffect(() => { localStorage.setItem(FILTER_KEY, prop); }, [prop]);
+
+  // A persisted filter can point at a property with no sheets anymore (all
+  // deleted, or a different dataset). Fall back to "All" so the grid isn't
+  // silently empty with no chip to recover — chips only show with 2+ properties.
+  useEffect(() => {
+    if (prop && !sheets.some((s) => s.property_id === prop)) setProp("");
+  }, [sheets, prop]);
 
   function exitSelecting() {
     setSelecting(false);
@@ -77,6 +126,16 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [menuOpen]);
+
+  // close the sort dropdown on an outside click
+  useEffect(() => {
+    if (!sortOpen) return;
+    const onDoc = (e) => {
+      if (sortRef.current && !sortRef.current.contains(e.target)) setSortOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [sortOpen]);
 
   function toggleSel(key) {
     setSelected((prev) => {
@@ -103,6 +162,19 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
     }));
     if (!items.length) return;
     const proceeded = await onBatchDelete(items);   // parent confirms + deletes
+    if (proceeded) exitSelecting();
+  }
+
+  // Re-open the selected sheets, each as its own editor tab — the portfolio-
+  // update path: "Select all" then this opens the whole library for editing.
+  // Parent does the work (and confirms large batches); we just exit on success.
+  async function reopenSelected() {
+    closeMenu();
+    const items = selectedSheets().map((s) => ({
+      property_id: s.property_id, sheet_id: s.sheet_id, title: s.title,
+    }));
+    if (!items.length) return;
+    const proceeded = await onReopenAll(items);
     if (proceeded) exitSelecting();
   }
 
@@ -137,8 +209,26 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
         <h4>Library ({sheets.length})</h4>
         <div className="libtools">
           {sheets.length > 0 && (
-            <input className="libsearch" type="text" placeholder="Search title / suite / property…"
-              value={q} onChange={(e) => setQ(e.target.value)} />
+            <div className="libsearch-wrap">
+              <input className="libsearch" type="text" placeholder="Search title / suite / property…"
+                value={q} onChange={(e) => setQ(e.target.value)} />
+              <div className="libsort-wrap" ref={sortRef}>
+                <button className="libsort" title="Sort"
+                  onClick={() => setSortOpen((o) => !o)}>
+                  <span className="sorticon">⇅</span><span className="caret">▾</span>
+                </button>
+                {sortOpen && (
+                  <div className="libmenu">
+                    {SORTS.map((o) => (
+                      <button key={o.key} className={sort === o.key ? "on" : ""}
+                        onClick={() => { setSort(o.key); setSortOpen(false); }}>
+                        {o.label}{sort === o.key && <span className="sortcheck">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
           {sheets.length > 0 && !selecting && (
             <button className="libdownload" onClick={() => setSelecting(true)}>Batch actions</button>
@@ -158,6 +248,8 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
                 </button>
                 {menuOpen && (
                   <div className="libmenu">
+                    <button className="libmenu-item" onClick={reopenSelected}>Open in editor tabs</button>
+                    <div className="libmenu-sep" />
                     <button className="libmenu-item" onClick={() => setDlOpen((o) => !o)}>
                       Download as<span className="caret">{dlOpen ? "▾" : "▸"}</span>
                     </button>
@@ -201,7 +293,7 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
       )}
 
       <div className="libgrid">
-        {visible.map((s) => {
+        {sorted.map((s) => {
           // cache-bust artifacts after an overwrite (same URL, new content)
           const bust = s.updated ? `?v=${encodeURIComponent(s.updated)}` : "";
           const sel = selected.has(skey(s));
