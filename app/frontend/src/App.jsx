@@ -1035,7 +1035,7 @@ export default function App() {
 
           <div className="step">
             <h3>
-              <span className="num">2</span> Upload floor plan
+              <span className="num">2</span> Upload floor plans
               <span className="infodot" tabIndex={0}>
                 ⓘ
                 <span className="infotip" role="tooltip">
