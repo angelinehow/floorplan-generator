@@ -590,7 +590,10 @@ select, input[type="text"] {
   accent-color: var(--ember);
   filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 2px #fff);
 }
-.libcard img { width: 100%; display: block; }
+/* aspect-ratio reserves the card's height before the thumb loads: without it a
+   lazy <img> has zero height, so every card sits in the viewport at once and
+   loading="lazy" defers nothing. Matches the sheet page ratio (PAGE_W:PAGE_H). */
+.libcard img { width: 100%; display: block; aspect-ratio: 1000 / 1080; object-fit: cover; }
 .libthumb { position: relative; display: block; }
 .thumbhint {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;

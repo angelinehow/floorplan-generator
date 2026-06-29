@@ -28,7 +28,8 @@ from main import (RenderRequest, Property, do_render, compose_config,
                   _safe_id, sweep_uploads, capabilities, health,
                   put_property, get_property, list_properties, delete_property,
                   list_sheets, reopen_sheet, delete_sheet, get_sheet_svg,
-                  get_sheet_png, parse as parse_endpoint, _apply_custom_fonts)
+                  get_sheet_png, get_sheet_thumb, parse as parse_endpoint,
+                  _apply_custom_fonts)
 
 
 class _TempDataDirs(unittest.TestCase):
@@ -206,6 +207,44 @@ class SheetLifecycleTest(_TempDataDirs):
     def test_reopen_without_geometry_is_404(self):
         with self.assertRaises(HTTPException) as ctx:
             reopen_sheet("acme", "nope")
+        self.assertEqual(ctx.exception.status_code, 404)
+
+
+class SheetThumbnailTest(_TempDataDirs):
+    def _save_sheet(self):
+        doc = self._cache_prims()
+        put_property("acme", Property(id="acme", name="ACME"))
+        out = do_render(RenderRequest(doc_id=doc, property_id="acme",
+                                      metadata={"title": "2 BED"}, save=True))
+        return out["sheet_id"]
+
+    def test_thumbnail_built_on_save_and_downscaled(self):
+        import io
+        from PIL import Image
+        sid = self._save_sheet()
+        # save pre-builds the thumb so the library grid never fetches the full sheet
+        thumb_path = os.path.join(main.SHEET_DIR, "acme", f"{sid}.thumb.png")
+        self.assertTrue(os.path.exists(thumb_path))
+
+        thumb = get_sheet_thumb("acme", sid)
+        self.assertEqual(thumb.media_type, "image/png")
+        tw, _ = Image.open(io.BytesIO(bytes(thumb.body))).size
+        fw, _ = Image.open(io.BytesIO(bytes(get_sheet_png("acme", sid).body))).size
+        self.assertLessEqual(tw, main.THUMB_W)   # never wider than the cap
+        self.assertLess(tw, fw)                  # and smaller than the full sheet
+
+    def test_thumbnail_regenerated_lazily_for_legacy_sheet(self):
+        sid = self._save_sheet()
+        # an older sheet saved before thumbnails existed: only the full PNG is present
+        os.remove(os.path.join(main.SHEET_DIR, "acme", f"{sid}.thumb.png"))
+        thumb = get_sheet_thumb("acme", sid)        # generated on demand from the full PNG
+        self.assertEqual(thumb.media_type, "image/png")
+        self.assertTrue(os.path.exists(             # and cached back for next time
+            os.path.join(main.SHEET_DIR, "acme", f"{sid}.thumb.png")))
+
+    def test_missing_sheet_thumbnail_is_404(self):
+        with self.assertRaises(HTTPException) as ctx:
+            get_sheet_thumb("acme", "nope")
         self.assertEqual(ctx.exception.status_code, 404)
 
 

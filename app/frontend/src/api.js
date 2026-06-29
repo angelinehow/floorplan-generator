@@ -99,6 +99,12 @@ export function sheetUrl(propertyId, sheetId, ext) {
   return `${BASE}/sheets/${propertyId}/${sheetId}.${ext}`;
 }
 
+// Small (~600px) library-grid thumbnail — a fraction of the full sheet PNG's
+// bytes. Backend builds it on save and lazily for older sheets (GET .thumb.png).
+export function sheetThumbUrl(propertyId, sheetId) {
+  return `${BASE}/sheets/${propertyId}/${sheetId}.thumb.png`;
+}
+
 // Batch download: POST selected sheets + formats, get back a ZIP blob. Has its
 // own error path because handle() assumes a JSON body; this response is binary.
 export async function downloadSheets(items, formats, planOnly = false) {

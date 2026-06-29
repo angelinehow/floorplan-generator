@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { sheetUrl, downloadSheets } from "./api.js";
+import { sheetUrl, sheetThumbUrl, downloadSheets } from "./api.js";
 import { toast } from "./toast.js";
 
 // Download filename: property slug prefixes the unit title, matching the editor's
@@ -306,7 +306,8 @@ export default function Library({ sheets, onReopen, onDelete, onRename, onBatchD
             <a className="libthumb" href={sheetUrl(s.property_id, s.sheet_id, "png") + bust}
                target="_blank" rel="noreferrer"
                onClick={selecting ? (e) => { e.preventDefault(); toggleSel(skey(s)); } : undefined}>
-              <img src={sheetUrl(s.property_id, s.sheet_id, "png") + bust} alt={s.title} />
+              <img src={sheetThumbUrl(s.property_id, s.sheet_id) + bust} alt={s.title}
+                   loading="lazy" decoding="async" />
               {!selecting && <span className="thumbhint">Preview in new tab</span>}
             </a>
             <div className="cap">
