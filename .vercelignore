@@ -1,0 +1,27 @@
+# Controls what the Vercel CLI uploads for a remote build.
+# IMPORTANT: when this file exists, Vercel does NOT fall back to .gitignore, so
+# every heavy/unneeded path must be listed here explicitly.
+#
+# app/frontend/dist is deliberately NOT ignored: it's gitignored for local dev,
+# but the serverless function serves it as the SPA, and it's pulled into the
+# function bundle via `includeFiles` in vercel.json. It must be uploaded.
+
+# dependencies / build caches
+app/frontend/node_modules
+app/frontend/.vite
+app/backend/.venv
+
+# python bytecode
+__pycache__
+*.pyc
+
+# transient/local runtime data — prod persistence is Vercel Blob, not this tree
+app/backend/data
+
+# large reference samples + prototype docs, not used at runtime
+app/references
+app/rough_work
+*.rvt
+
+# vcs / local env
+.git
