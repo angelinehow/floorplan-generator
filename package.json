@@ -1,0 +1,7 @@
+{
+  "name": "floorplan-generator",
+  "private": true,
+  "scripts": {
+    "vercel-build": "npm --prefix app/frontend install && npm --prefix app/frontend run build"
+  }
+}
